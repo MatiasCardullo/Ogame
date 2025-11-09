@@ -116,23 +116,35 @@ class BrowserWindow(QMainWindow):
             }
         """)
 
+        sidebar_layout = QVBoxLayout()
+        self.layout.addWidget(self.sidebar)
+        self.sidebar.setLayout(sidebar_layout)
         # --- Info básica ---
         self.player_label = QLabel("👤 Jugador: —")
         self.planet_label = QLabel("🪐 Planeta: —")
         self.coords_label = QLabel("📍 Coordenadas: —")
         self.universe_label = QLabel("🌌 Universo: —")
-
+        sidebar_layout.addWidget(self.player_label)
+        sidebar_layout.addWidget(self.planet_label)
+        sidebar_layout.addWidget(self.coords_label)
+        sidebar_layout.addWidget(self.universe_label)
+        sidebar_layout.addSpacing(10)
         # --- Recursos ---
         self.metal_label = QLabel("⚙️ Metal: —")
         self.crystal_label = QLabel("💎 Cristal: —")
         self.deut_label = QLabel("🧪 Deuterio: —")
         self.energy_label = QLabel("⚡ Energía: —")
-
+        sidebar_layout.addWidget(self.metal_label)
+        sidebar_layout.addWidget(self.crystal_label)
+        sidebar_layout.addWidget(self.deut_label)
+        sidebar_layout.addWidget(self.energy_label)
+        sidebar_layout.addSpacing(10)
         # --- Colas ---
         self.queue_text = QTextEdit()
         self.queue_text.setReadOnly(True)
         self.queue_text.setFixedHeight(180)
-
+        sidebar_layout.addWidget(QLabel("📋 Colas activas:"))
+        sidebar_layout.addWidget(self.queue_text)
         # --- Botones ---
         self.refresh_btn = QPushButton("🔄 Actualizar recursos")
         self.refresh_btn.clicked.connect(self.update_resources)
@@ -140,27 +152,14 @@ class BrowserWindow(QMainWindow):
         self.update_queue_btn.clicked.connect(self.update_queues)
         self.save_btn = QPushButton("💾 Guardar HTML")
         self.save_btn.clicked.connect(self.save_html)
-
-        sidebar_layout = QVBoxLayout()
-        sidebar_layout.addWidget(self.player_label)
-        sidebar_layout.addWidget(self.planet_label)
-        sidebar_layout.addWidget(self.coords_label)
-        sidebar_layout.addWidget(self.universe_label)
-        sidebar_layout.addSpacing(10)
-        sidebar_layout.addWidget(self.metal_label)
-        sidebar_layout.addWidget(self.crystal_label)
-        sidebar_layout.addWidget(self.deut_label)
-        sidebar_layout.addWidget(self.energy_label)
-        sidebar_layout.addSpacing(10)
-        sidebar_layout.addWidget(QLabel("📋 Colas activas:"))
-        sidebar_layout.addWidget(self.queue_text)
         sidebar_layout.addWidget(self.refresh_btn)
         sidebar_layout.addWidget(self.update_queue_btn)
         sidebar_layout.addWidget(self.save_btn)
-        self.sidebar.setLayout(sidebar_layout)
 
-        self.layout.addWidget(self.sidebar)
-        self.web.loadFinished.connect(self.update_meta_info)
+        self.update_meta_info()
+        self.update_resources()
+        self.update_queues()
+
 
     def remove_sidebar(self):
         self.has_sidebar = False
@@ -307,11 +306,11 @@ class BrowserWindow(QMainWindow):
         r["deuterium"] += deuterium_incr
 
         # Debug opcional
-        if not hasattr(self, "_res_debug_counter"):
-            self._res_debug_counter = 0
-        self._res_debug_counter += 1
-        if self._res_debug_counter % 5 == 0:
-            print(f"[RES_DEBUG] +{metal_incr:.2f} / +{crystal_incr:.2f} / +{deuterium_incr:.2f}  (prod_s: {r['prod_metal']}, {r['prod_crystal']}, {r['prod_deuterium']})")
+        #if not hasattr(self, "_res_debug_counter"):
+        #    self._res_debug_counter = 0
+        #self._res_debug_counter += 1
+        #if self._res_debug_counter % 5 == 0:
+        #    print(f"[RES_DEBUG] +{metal_incr:.2f} / +{crystal_incr:.2f} / +{deuterium_incr:.2f}  (prod_s: {r['prod_metal']}, {r['prod_crystal']}, {r['prod_deuterium']})")
 
         self.update_resource_labels()
 
@@ -323,11 +322,24 @@ class BrowserWindow(QMainWindow):
             self.web.page().runJavaScript(extract_queue_script, self.handle_queue_data)
 
     def handle_queue_data(self, data):
-        if not data or not self.has_sidebar:
+        if not self.has_sidebar:
+            return
+
+        previous_queues = getattr(self, "current_queues", [])
+
+        if not data:
             self.current_queues = []
             self.queue_text.setText("— No hay construcciones activas —")
             self.timer_fast.stop()
             return
+
+        # Detectar inicio de nueva cola
+        new_queue_names = {q["name"] for q in data}
+        old_queue_names = {q["name"] for q in previous_queues}
+        if not old_queue_names.issuperset(new_queue_names):
+            # ⚙️ Si hay al menos una nueva cola, actualizar recursos
+            print("[DEBUG] Nueva cola detectada, actualizando recursos...")
+            QTimer.singleShot(1000, self.update_resources)
 
         self.current_queues = data
         self.timer_fast.start()
@@ -370,7 +382,7 @@ class BrowserWindow(QMainWindow):
         # ⚙️ Cuando una cola termina, actualizar colas y recursos
         if finished_any:
             self.update_queues()
-            QTimer.singleShot(2000, self.update_resources)
+            self.update_resources()
 
     # ================================
     #   Guardar HTML
