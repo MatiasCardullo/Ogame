@@ -49,10 +49,15 @@ class BrowserWindow(QMainWindow):
         self.container.setLayout(self.layout)
         self.setCentralWidget(self.container)
 
-        # --- Timer para auto-refresh ---
+        # --- Timer de auto-refresh general (cada 5 s) ---
         self.timer = QTimer(self)
-        self.timer.setInterval(5000)  # 5 segundos
+        self.timer.setInterval(5000)
         self.timer.timeout.connect(self.auto_update)
+
+        # --- Timer de actualización visual rápida (cada 1 s) ---
+        self.timer_fast = QTimer(self)
+        self.timer_fast.setInterval(1000)
+        self.timer_fast.timeout.connect(self.update_queue_timers)
 
         # Detectar entorno ingame
         self.web.loadFinished.connect(self.check_if_ingame)
@@ -200,34 +205,61 @@ class BrowserWindow(QMainWindow):
         if self.has_sidebar:
             self.web.page().runJavaScript(extract_queue_script, self.handle_queue_data)
 
-    def handle_queue_data(self, data):
+    def update_queue_timers(self):
         import time
-        if not data or not self.has_sidebar:
-            self.queue_text.setText("— No hay construcciones activas —")
+        if not hasattr(self, "current_queues") or not self.current_queues:
             return
 
         now = int(time.time())
         lines = []
-        for entry in data:
-            label = entry.get("label", "")
-            name = entry.get("name", "")
-            level = entry.get("level", "")
-            remaining = entry.get("time", "")
-            start = entry.get("start", 0)
-            end = entry.get("end", 0)
+        finished_any = False
 
-            # Calcular progreso (0–100)
+        for entry in self.current_queues:
+            label = entry["label"]
+            name = entry["name"]
+            level = entry["level"]
+            start = entry["start"]
+            end = entry["end"]
+
+            remaining = max(0, end - now)
+            minutes, seconds = divmod(remaining, 60)
+            remaining_str = f"{minutes}m {seconds:02d}s" if remaining > 0 else "Completado"
+
+            # Progreso visual
             progress = 0
-            if start and end and end > start:
+            if end > start:
                 progress = max(0, min(100, int(((now - start) / (end - start)) * 100)))
 
             bar_length = 26
             filled = int(bar_length * progress / 100)
-            bar = "█" * filled + "░" * (bar_length - filled)
+            if progress < 60:
+                bar = f"<span style='color:#0f0;'>{'█'*filled}</span><span style='color:#555;'>{'░'*(bar_length-filled)}</span>"
+            elif progress < 90:
+                bar = f"<span style='color:#ff0;'>{'█'*filled}</span><span style='color:#555;'>{'░'*(bar_length-filled)}</span>"
+            else:
+                bar = f"<span style='color:#f00;'>{'█'*filled}</span><span style='color:#555;'>{'░'*(bar_length-filled)}</span>"
 
-            lines.append(f"{label}: {name} {level} ({remaining})\n[{bar}] {progress}%")
+            lines.append(f"{label}: {name} {level} ({remaining_str})<br>[{bar}] {progress}%")
 
-        self.queue_text.setText("\n\n".join(lines))
+            if remaining <= 0:
+                finished_any = True
+
+        self.queue_text.setHtml("<br><br>".join(lines))
+
+        # Si terminó una cola, volver a ejecutar JS para refrescar
+        if finished_any:
+            self.update_queues()
+
+    def handle_queue_data(self, data):
+        import time
+        if not data or not self.has_sidebar:
+            self.current_queues = []
+            self.queue_text.setText("— No hay construcciones activas —")
+            return
+
+        # Guardar en memoria las colas actuales para update visual cada 1 s
+        self.current_queues = data
+        self.update_queue_timers()
 
     # ================================
     #   Auto-refresh cada 5 segundos
@@ -235,14 +267,16 @@ class BrowserWindow(QMainWindow):
     def toggle_auto_refresh(self, state):
         if state:
             self.timer.start()
+            self.timer_fast.start()
         else:
             self.timer.stop()
+            self.timer_fast.stop()
 
     def auto_update(self):
-        if not self.has_sidebar:
-            return
+        # Si no hay colas, intentar buscarlas
+        if not getattr(self, "current_queues", None):
+            self.update_queues()
         self.update_resources()
-        self.update_queues()
 
     # ================================
     #   Guardar HTML
