@@ -1,14 +1,15 @@
 import os
-os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
+#os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
 import time
 from PyQt6.QtWidgets import (
     QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
-    QToolBar, QPushButton, QLabel, QFrame, QFileDialog, QTextEdit
+    QToolBar, QPushButton, QLabel, QFrame, QFileDialog, QTextEdit,
+    QSystemTrayIcon
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
 from PyQt6.QtCore import QUrl, QTimer
-
+from PyQt6.QtGui import QIcon
 from custom_page import CustomWebPage
 from sidebar_updater import extract_meta_script, extract_resources_script, extract_queue_script
 
@@ -160,7 +161,6 @@ class BrowserWindow(QMainWindow):
         self.update_resources()
         self.update_queues()
 
-
     def remove_sidebar(self):
         self.has_sidebar = False
         for i in reversed(range(self.layout.count())):
@@ -284,7 +284,6 @@ class BrowserWindow(QMainWindow):
         self.deut_label.setText(f"🧪 Deuterio: {fmt(r['deuterium'])} <span style='color:#ff0;'> (+{fmt(pd)}/h)</span>")
         self.energy_label.setText(f"⚡ Energía: {fmt(r['energy'])}")
 
-
     def increment_resources(self):
         r = getattr(self, "current_resources", None)
         if not r:
@@ -318,8 +317,22 @@ class BrowserWindow(QMainWindow):
     #   Colas de construcción
     # ================================
     def update_queues(self):
-        if self.has_sidebar:
-            self.web.page().runJavaScript(extract_queue_script, self.handle_queue_data)
+        if not self.has_sidebar:
+            return
+
+        check_script = """
+            (function() {
+                return !!document.querySelector('#productionboxbuildingcomponent, #productionboxresearchcomponent, #productionboxshipyardcomponent');
+            })();
+        """
+
+        def after_check(has_sections):
+            if has_sections:
+                self.web.page().runJavaScript(extract_queue_script, self.handle_queue_data)
+            else:
+                print("[DEBUG] Página sin secciones de cola, se omite actualización.")
+
+        self.web.page().runJavaScript(check_script, after_check)
 
     def handle_queue_data(self, data):
         if not self.has_sidebar:
@@ -353,6 +366,10 @@ class BrowserWindow(QMainWindow):
         lines = []
         finished_any = False
 
+        # 🔹 Crear set para registrar colas terminadas (si no existe)
+        if not hasattr(self, "finished_queue_names"):
+            self.finished_queue_names = set()
+
         for entry in self.current_queues:
             label = entry["label"]
             name = entry["name"]
@@ -374,15 +391,26 @@ class BrowserWindow(QMainWindow):
 
             lines.append(f"{label}: {name} {level} ({remaining_str})<br>[{bar}] {progress}%")
 
-            if remaining <= 0:
+            # ✅ Detectar finalización nueva
+            if remaining <= 0 and name not in self.finished_queue_names:
+                self.finished_queue_names.add(name)
                 finished_any = True
+                self.show_notification("✅ Cola completada", f"{label}: {name} {level}")
 
         self.queue_text.setHtml("<br><br>".join(lines))
 
-        # ⚙️ Cuando una cola termina, actualizar colas y recursos
+        # ⚙️ Si terminó alguna, actualizar colas y recursos
         if finished_any:
             self.update_queues()
             self.update_resources()
+
+    def show_notification(self, title, message):
+        """Muestra una notificación en el sistema (bandeja)"""
+        if not hasattr(self, "tray_icon"):
+            self.tray_icon = QSystemTrayIcon(self)
+            self.tray_icon.setIcon(QIcon())  # Podés poner un icono propio
+            self.tray_icon.show()
+        self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 4000)
 
     # ================================
     #   Guardar HTML
