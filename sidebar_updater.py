@@ -8,19 +8,54 @@ extract_meta_script = """
 })();
 """
 
-# --- Extrae recursos del DOM ---
 extract_resources_script = """
 (function() {
-    let ids = ['metal_box', 'crystal_box', 'deuterium_box', 'energy_box'];
-    let data = {};
-    for (let id of ids) {
-        let el = document.getElementById(id);
-        if (el) {
-            let valueEl = el.querySelector('.value');
-            data[id] = valueEl ? valueEl.textContent.trim() : '—';
-        }
+    function debug(msg) {
+        try { console.log("[OGameDebug]", msg); } catch(e) {}
     }
-    return data;
+
+    // --- Intentar leer el JSON de reloadResources ---
+    try {
+        const scripts = document.getElementsByTagName('script');
+        for (let i = 0; i < scripts.length; i++) {
+            const txt = scripts[i].textContent || '';
+            const m = txt.match(/reloadResources\\s*\\(\\s*(\\{[\\s\\S]*?\\})\\s*\\)\\s*;/);
+            if (m && m[1]) {
+                debug("Encontrado JSON en reloadResources()");
+                try {
+                    const obj = JSON.parse(m[1]);
+                    if (obj && obj.resources) {
+                        const r = obj.resources;
+                        const data = {
+                            metal: String(r.metal?.amount ?? '—'),
+                            crystal: String(r.crystal?.amount ?? '—'),
+                            deuterium: String(r.deuterium?.amount ?? '—'),
+                            energy: String(r.energy?.amount ?? '—')
+                        };
+                        debug("Datos extraídos del JSON: " + JSON.stringify(data));
+                        return data;  // ✅ retorna directamente al callback Python
+                    }
+                } catch(e) { debug("Error al parsear JSON: " + e); }
+            }
+        }
+    } catch(e) { debug("Error general JSON: " + e); }
+
+    // --- Fallback DOM ---
+    try {
+        const mapping = { '0': 'metal', '1': 'crystal', '2': 'deuterium', '3': 'energy' };
+        let data = {};
+        Object.keys(mapping).forEach(function(idx) {
+            let el = document.querySelector('td.normalmark[data-resourceidx=\"' + idx + '\"] span') ||
+                     document.querySelector('td.normalmark[data-resourceidx=\"' + idx + '\"]');
+            let txt = el ? (el.textContent || el.innerText || '').trim() : '—';
+            data[mapping[idx]] = txt || '—';
+        });
+        debug("Fallback DOM data: " + JSON.stringify(data));
+        return data;
+    } catch(e) {
+        debug("Error final: " + e);
+        return { metal: '—', crystal: '—', deuterium: '—', energy: '—' };
+    }
 })();
 """
 

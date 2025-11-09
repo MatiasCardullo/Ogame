@@ -1,7 +1,9 @@
 import os
+os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
+import time
 from PyQt6.QtWidgets import (
     QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
-    QToolBar, QPushButton, QLabel, QFrame, QFileDialog, QTextEdit, QCheckBox
+    QToolBar, QPushButton, QLabel, QFrame, QFileDialog, QTextEdit
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
@@ -73,7 +75,7 @@ class BrowserWindow(QMainWindow):
         def after_check(is_ingame):
             self.toggle_sidebar(is_ingame)
             if is_ingame:
-                self.update_queues()  # Ejecutar JS solo una vez por carga
+                self.update_queues()
         self.web.page().runJavaScript(script, after_check)
 
     def toggle_sidebar(self, is_ingame):
@@ -140,10 +142,6 @@ class BrowserWindow(QMainWindow):
         self.save_btn = QPushButton("💾 Guardar HTML")
         self.save_btn.clicked.connect(self.save_html)
 
-        # --- Auto-refresh toggle ---
-        self.auto_refresh = QCheckBox("⏱️ Auto-actualizar cada 5 s")
-        self.auto_refresh.stateChanged.connect(self.toggle_auto_refresh)
-
         sidebar_layout = QVBoxLayout()
         sidebar_layout.addWidget(self.player_label)
         sidebar_layout.addWidget(self.planet_label)
@@ -160,7 +158,6 @@ class BrowserWindow(QMainWindow):
         sidebar_layout.addWidget(self.refresh_btn)
         sidebar_layout.addWidget(self.update_queue_btn)
         sidebar_layout.addWidget(self.save_btn)
-        sidebar_layout.addWidget(self.auto_refresh)
         self.sidebar.setLayout(sidebar_layout)
 
         self.layout.addWidget(self.sidebar)
@@ -188,24 +185,73 @@ class BrowserWindow(QMainWindow):
         self.coords_label.setText(f"📍 Coordenadas: {data.get('ogame-planet-coordinates', '—')}")
         self.universe_label.setText(f"🌌 Universo: {data.get('ogame-universe-name', '—')}")
 
+    # ================================
+    #   Actualizar recursos
+    # ================================
     def update_resources(self):
-        if self.has_sidebar:
-            self.web.page().runJavaScript(extract_resources_script, self.handle_resource_data)
+        """Abre una ventana minimizada con la misma sesión para extraer recursos."""
+        if not self.has_sidebar:
+            return
+
+        # 🔹 Usar el mismo perfil de sesión que el navegador principal
+        profile = self.web.page().profile()
+
+        # Crear ventana secundaria (minimizada)
+        self.hidden_window = QMainWindow()
+        self.hidden_window.setWindowTitle("OGame Resource Fetcher")
+        self.hidden_window.resize(800, 600)
+        self.hidden_window.showMinimized()
+
+        self.hidden_web = QWebEngineView()
+        self.hidden_page = CustomWebPage(profile, self.hidden_web, main_window=self)
+        self.hidden_web.setPage(self.hidden_page)
+        self.hidden_window.setCentralWidget(self.hidden_web)
+
+        def after_load():
+            print("[DEBUG] Página de recursos cargada, ejecutando script...")
+            QTimer.singleShot(2000, lambda: self.hidden_web.page().runJavaScript(
+                extract_resources_script, self.handle_resource_data
+            ))
+            QTimer.singleShot(6000, self.hidden_window.close)
+
+        self.hidden_web.loadFinished.connect(after_load)
+
+        current_url = self.web.url().toString()
+        base_url = current_url.split("?")[0]
+        prod_url = base_url + "?page=ingame&component=resourcesettings"
+        print(f"[DEBUG] Cargando página de recursos: {prod_url}")
+        self.hidden_web.load(QUrl(prod_url))
 
     def handle_resource_data(self, data):
+        print("[DEBUG] Datos recibidos de extract_resources_script:", data)
         if not data or not self.has_sidebar:
             return
-        self.metal_label.setText(f"⚙️ Metal: {data.get('metal_box', '—')}")
-        self.crystal_label.setText(f"💎 Cristal: {data.get('crystal_box', '—')}")
-        self.deut_label.setText(f"🧪 Deuterio: {data.get('deuterium_box', '—')}")
-        self.energy_label.setText(f"⚡ Energía: {data.get('energy_box', '—')}")
 
+        self.metal_label.setText(f"⚙️ Metal: {data.get('metal', '—')}")
+        self.crystal_label.setText(f"💎 Cristal: {data.get('crystal', '—')}")
+        self.deut_label.setText(f"🧪 Deuterio: {data.get('deuterium', '—')}")
+        self.energy_label.setText(f"⚡ Energía: {data.get('energy', '—')}")
+
+
+    # ================================
+    #   Colas de construcción
+    # ================================
     def update_queues(self):
         if self.has_sidebar:
             self.web.page().runJavaScript(extract_queue_script, self.handle_queue_data)
 
+    def handle_queue_data(self, data):
+        if not data or not self.has_sidebar:
+            self.current_queues = []
+            self.queue_text.setText("— No hay construcciones activas —")
+            self.timer_fast.stop()
+            return
+
+        self.current_queues = data
+        self.timer_fast.start()
+        self.update_queue_timers()
+
     def update_queue_timers(self):
-        import time
         if not hasattr(self, "current_queues") or not self.current_queues:
             return
 
@@ -239,35 +285,10 @@ class BrowserWindow(QMainWindow):
 
         self.queue_text.setHtml("<br><br>".join(lines))
 
-        # ⚙️ Cuando una cola termina, volver a ejecutar el JS una vez
+        # ⚙️ Cuando una cola termina, actualizar colas y recursos
         if finished_any:
             self.update_queues()
-
-    def handle_queue_data(self, data):
-        if not data or not self.has_sidebar:
-            self.current_queues = []
-            self.queue_text.setText("— No hay construcciones activas —")
-            return
-
-        # Guardar en memoria las colas actuales para update visual cada 1 s
-        self.current_queues = data
-        self.update_queue_timers()
-
-    # ================================
-    #   Auto-refresh cada 5 segundos
-    # ================================
-    def toggle_auto_refresh(self, state):
-        if state:
-            self.timer_fast.start()
-        else:
-            self.timer_fast.stop()
-
-
-    def auto_update(self):
-        # Si no hay colas, intentar buscarlas
-        if not getattr(self, "current_queues", None):
-            self.update_queues()
-        self.update_resources()
+            QTimer.singleShot(2000, self.update_resources)
 
     # ================================
     #   Guardar HTML
