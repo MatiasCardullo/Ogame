@@ -10,52 +10,34 @@ extract_meta_script = """
 
 extract_resources_script = """
 (function() {
-    function debug(msg) {
-        try { console.log("[OGameDebug]", msg); } catch(e) {}
-    }
+    function debug(msg) { try { console.log("[OGameDebug]", msg); } catch(e) {} }
 
-    // --- Intentar leer el JSON de reloadResources ---
     try {
         const scripts = document.getElementsByTagName('script');
         for (let i = 0; i < scripts.length; i++) {
             const txt = scripts[i].textContent || '';
             const m = txt.match(/reloadResources\\s*\\(\\s*(\\{[\\s\\S]*?\\})\\s*\\)\\s*;/);
             if (m && m[1]) {
-                debug("Encontrado JSON en reloadResources()");
-                try {
-                    const obj = JSON.parse(m[1]);
-                    if (obj && obj.resources) {
-                        const r = obj.resources;
-                        const data = {
-                            metal: String(r.metal?.amount ?? '—'),
-                            crystal: String(r.crystal?.amount ?? '—'),
-                            deuterium: String(r.deuterium?.amount ?? '—'),
-                            energy: String(r.energy?.amount ?? '—')
-                        };
-                        debug("Datos extraídos del JSON: " + JSON.stringify(data));
-                        return data;  // ✅ retorna directamente al callback Python
-                    }
-                } catch(e) { debug("Error al parsear JSON: " + e); }
+                const obj = JSON.parse(m[1]);
+                if (obj && obj.resources) {
+                    const r = obj.resources;
+                    const data = {
+                        metal: String(r.metal?.amount ?? '—'),
+                        crystal: String(r.crystal?.amount ?? '—'),
+                        deuterium: String(r.deuterium?.amount ?? '—'),
+                        energy: String(r.energy?.amount ?? '—'),
+                        prod_metal: String(r.metal?.production ?? '0'),
+                        prod_crystal: String(r.crystal?.production ?? '0'),
+                        prod_deuterium: String(r.deuterium?.production ?? '0')
+                    };
+                    debug("Datos extraídos del JSON con producción: " + JSON.stringify(data));
+                    return data;
+                }
             }
         }
-    } catch(e) { debug("Error general JSON: " + e); }
+    } catch(e) { debug("Error: " + e); }
 
-    // --- Fallback DOM ---
-    try {
-        const mapping = { '0': 'metal', '1': 'crystal', '2': 'deuterium', '3': 'energy' };
-        let data = {};
-        Object.keys(mapping).forEach(function(idx) {
-            let el = document.querySelector('td.normalmark[data-resourceidx=\"' + idx + '\"] span') ||
-                     document.querySelector('td.normalmark[data-resourceidx=\"' + idx + '\"]');
-            let txt = el ? (el.textContent || el.innerText || '').trim() : '—';
-            data[mapping[idx]] = txt || '—';
-        });
-        debug("Fallback DOM data: " + JSON.stringify(data));
-        return data;
-    } catch(e) {
-        debug("Error final: " + e);
-        return { metal: '—', crystal: '—', deuterium: '—', energy: '—' };
-    }
+    return { metal:'—', crystal:'—', deuterium:'—', energy:'—', prod_metal:'0', prod_crystal:'0', prod_deuterium:'0' };
 })();
 """
 

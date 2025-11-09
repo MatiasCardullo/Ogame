@@ -12,7 +12,6 @@ from PyQt6.QtCore import QUrl, QTimer
 from custom_page import CustomWebPage
 from sidebar_updater import extract_meta_script, extract_resources_script, extract_queue_script
 
-
 class BrowserWindow(QMainWindow):
     def __init__(self, profile=None, url=None, main_window=None):
         super().__init__()
@@ -227,11 +226,94 @@ class BrowserWindow(QMainWindow):
         if not data or not self.has_sidebar:
             return
 
-        self.metal_label.setText(f"⚙️ Metal: {data.get('metal', '—')}")
-        self.crystal_label.setText(f"💎 Cristal: {data.get('crystal', '—')}")
-        self.deut_label.setText(f"🧪 Deuterio: {data.get('deuterium', '—')}")
-        self.energy_label.setText(f"⚡ Energía: {data.get('energy', '—')}")
+        def to_num(x):
+            try:
+                return float(str(x).replace(",", ".").strip())
+            except:
+                return 0.0
 
+        metal = to_num(data.get("metal"))
+        crystal = to_num(data.get("crystal"))
+        deuterium = to_num(data.get("deuterium"))
+        energy = to_num(data.get("energy"))
+
+        prod_metal = to_num(data.get("prod_metal"))
+        prod_crystal = to_num(data.get("prod_crystal"))
+        prod_deuterium = to_num(data.get("prod_deuterium"))
+
+        self.current_resources = {
+            "metal": metal,
+            "crystal": crystal,
+            "deuterium": deuterium,
+            "energy": energy,
+            "prod_metal": prod_metal,
+            "prod_crystal": prod_crystal,
+            "prod_deuterium": prod_deuterium,
+            "last_update": time.time()
+        }
+
+        print(f"[DEBUG] Estado recursos inicial: M={metal} (+{prod_metal}/s), C={crystal} (+{prod_crystal}/s), D={deuterium} (+{prod_deuterium}/s)")
+
+        self.update_resource_labels()
+
+        if hasattr(self, "timer_resources"):
+            self.timer_resources.stop()
+        else:
+            self.timer_resources = QTimer(self)
+            self.timer_resources.setInterval(1000)
+            self.timer_resources.timeout.connect(self.increment_resources)
+
+        self.timer_resources.start()
+
+    def update_resource_labels(self):
+        """Actualiza los labels de la barra lateral con los valores actuales."""
+        r = getattr(self, "current_resources", None)
+        if not r:
+            return
+
+        def fmt(x):
+            return f"{int(x):,}".replace(",", ".")
+
+        # cálculo de producción por hora
+        pm = r["prod_metal"] * 3600
+        pc = r["prod_crystal"] * 3600
+        pd = r["prod_deuterium"] * 3600
+
+        # etiquetas con color y producción
+        self.metal_label.setText(f"⚙️ Metal: {fmt(r['metal'])} <span style='color:#0f0;'> (+{fmt(pm)}/h)</span>")
+        self.crystal_label.setText(f"💎 Cristal: {fmt(r['crystal'])} <span style='color:#0af;'> (+{fmt(pc)}/h)</span>")
+        self.deut_label.setText(f"🧪 Deuterio: {fmt(r['deuterium'])} <span style='color:#ff0;'> (+{fmt(pd)}/h)</span>")
+        self.energy_label.setText(f"⚡ Energía: {fmt(r['energy'])}")
+
+
+    def increment_resources(self):
+        r = getattr(self, "current_resources", None)
+        if not r:
+            return
+
+        now = time.time()
+        elapsed = now - r["last_update"]
+        if elapsed <= 0:
+            return
+        r["last_update"] = now
+
+        # 🚀 Usar directamente producción/segundo (sin dividir por 3600)
+        metal_incr = r["prod_metal"] * elapsed
+        crystal_incr = r["prod_crystal"] * elapsed
+        deuterium_incr = r["prod_deuterium"] * elapsed
+
+        r["metal"] += metal_incr
+        r["crystal"] += crystal_incr
+        r["deuterium"] += deuterium_incr
+
+        # Debug opcional
+        if not hasattr(self, "_res_debug_counter"):
+            self._res_debug_counter = 0
+        self._res_debug_counter += 1
+        if self._res_debug_counter % 5 == 0:
+            print(f"[RES_DEBUG] +{metal_incr:.2f} / +{crystal_incr:.2f} / +{deuterium_incr:.2f}  (prod_s: {r['prod_metal']}, {r['prod_crystal']}, {r['prod_deuterium']})")
+
+        self.update_resource_labels()
 
     # ================================
     #   Colas de construcción
