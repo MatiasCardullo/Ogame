@@ -2,9 +2,8 @@ import os
 #os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
 import time
 from PyQt6.QtWidgets import (
-    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
-    QToolBar, QPushButton, QLabel, QFrame, QFileDialog, QTextEdit,
-    QSystemTrayIcon
+    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox,
+    QToolBar, QPushButton, QLabel, QFrame, QFileDialog, QTextEdit, QSystemTrayIcon
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
@@ -55,6 +54,11 @@ class BrowserWindow(QMainWindow):
         self.timer_fast = QTimer(self)
         self.timer_fast.setInterval(1000)
         self.timer_fast.timeout.connect(self.update_queue_timers)
+
+        # --- Icono de notificaciones del sistema ---
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(QIcon.fromTheme("applications-games"))
+        self.tray_icon.setVisible(True)
 
         # Detectar entorno ingame
         self.web.loadFinished.connect(self.check_if_ingame)
@@ -405,12 +409,30 @@ class BrowserWindow(QMainWindow):
             self.update_resources()
 
     def show_notification(self, title, message):
-        """Muestra una notificación en el sistema (bandeja)"""
-        if not hasattr(self, "tray_icon"):
-            self.tray_icon = QSystemTrayIcon(self)
-            self.tray_icon.setIcon(QIcon())  # Podés poner un icono propio
-            self.tray_icon.show()
-        self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 4000)
+        """Muestra una notificación de sistema y una alternativa en la sidebar."""
+        print(f"[NOTIFY] {title}: {message}")
+
+        # ✅ Mostrar notificación del sistema si está disponible
+        if hasattr(self, "tray_icon") and self.tray_icon.isSystemTrayAvailable():
+            self.tray_icon.showMessage(
+                title,
+                message,
+                QSystemTrayIcon.MessageIcon.Information,
+                5000
+            )
+
+        # 🧭 También mostrar un texto temporal en la sidebar (por si Windows no muestra nada)
+        if hasattr(self, "sidebar"):
+            try:
+                if not hasattr(self, "_notif_label"):
+                    from PyQt6.QtCore import QTimer
+                    self._notif_label = QLabel()
+                    self._notif_label.setStyleSheet("color: #0f0; font-weight: bold;")
+                    self.sidebar.layout().insertWidget(0, self._notif_label)
+                self._notif_label.setText(f"🔔 {title}: {message}")
+                QTimer.singleShot(8000, lambda: self._notif_label.setText(""))
+            except Exception as e:
+                print("[DEBUG] Error al mostrar notificación en sidebar:", e)
 
     # ================================
     #   Guardar HTML
