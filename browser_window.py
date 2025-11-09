@@ -37,7 +37,7 @@ class BrowserWindow(QMainWindow):
         # --- Toolbar ---
         self.toolbar = QToolBar()
         self.addToolBar(self.toolbar)
-        for text, func in [("⬅", self.web.back), ("➡", self.web.forward), ("↻", self.web.reload)]:
+        for text, func in [("<", self.web.back), (">", self.web.forward), ("↻", self.web.reload)]:
             btn = QPushButton(text)
             btn.clicked.connect(func)
             self.toolbar.addWidget(btn)
@@ -48,11 +48,6 @@ class BrowserWindow(QMainWindow):
         self.layout.addWidget(self.web)
         self.container.setLayout(self.layout)
         self.setCentralWidget(self.container)
-
-        # --- Timer de auto-refresh general (cada 5 s) ---
-        self.timer = QTimer(self)
-        self.timer.setInterval(5000)
-        self.timer.timeout.connect(self.auto_update)
 
         # --- Timer de actualización visual rápida (cada 1 s) ---
         self.timer_fast = QTimer(self)
@@ -75,7 +70,11 @@ class BrowserWindow(QMainWindow):
                 return false;
             })();
         """
-        self.web.page().runJavaScript(script, self.toggle_sidebar)
+        def after_check(is_ingame):
+            self.toggle_sidebar(is_ingame)
+            if is_ingame:
+                self.update_queues()  # Ejecutar JS solo una vez por carga
+        self.web.page().runJavaScript(script, after_check)
 
     def toggle_sidebar(self, is_ingame):
         if is_ingame and not self.has_sidebar:
@@ -225,19 +224,13 @@ class BrowserWindow(QMainWindow):
             minutes, seconds = divmod(remaining, 60)
             remaining_str = f"{minutes}m {seconds:02d}s" if remaining > 0 else "Completado"
 
-            # Progreso visual
             progress = 0
             if end > start:
                 progress = max(0, min(100, int(((now - start) / (end - start)) * 100)))
 
-            bar_length = 26
-            filled = int(bar_length * progress / 100)
-            if progress < 60:
-                bar = f"<span style='color:#0f0;'>{'█'*filled}</span><span style='color:#555;'>{'░'*(bar_length-filled)}</span>"
-            elif progress < 90:
-                bar = f"<span style='color:#ff0;'>{'█'*filled}</span><span style='color:#555;'>{'░'*(bar_length-filled)}</span>"
-            else:
-                bar = f"<span style='color:#f00;'>{'█'*filled}</span><span style='color:#555;'>{'░'*(bar_length-filled)}</span>"
+            color = "#0f0" if progress < 60 else "#ff0" if progress < 90 else "#f00"
+            filled = int(26 * progress / 100)
+            bar = f"<span style='color:{color};'>{'█'*filled}</span><span style='color:#555;'>{'░'*(26-filled)}</span>"
 
             lines.append(f"{label}: {name} {level} ({remaining_str})<br>[{bar}] {progress}%")
 
@@ -246,12 +239,11 @@ class BrowserWindow(QMainWindow):
 
         self.queue_text.setHtml("<br><br>".join(lines))
 
-        # Si terminó una cola, volver a ejecutar JS para refrescar
+        # ⚙️ Cuando una cola termina, volver a ejecutar el JS una vez
         if finished_any:
             self.update_queues()
 
     def handle_queue_data(self, data):
-        import time
         if not data or not self.has_sidebar:
             self.current_queues = []
             self.queue_text.setText("— No hay construcciones activas —")
@@ -266,11 +258,10 @@ class BrowserWindow(QMainWindow):
     # ================================
     def toggle_auto_refresh(self, state):
         if state:
-            self.timer.start()
             self.timer_fast.start()
         else:
-            self.timer.stop()
             self.timer_fast.stop()
+
 
     def auto_update(self):
         # Si no hay colas, intentar buscarlas
