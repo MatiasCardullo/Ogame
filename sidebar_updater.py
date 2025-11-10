@@ -10,8 +10,6 @@ extract_meta_script = """
 
 extract_resources_script = """
 (function() {
-    function debug(msg) { try { console.log("[OGameDebug]", msg); } catch(e) {} }
-
     try {
         const scripts = document.getElementsByTagName('script');
         for (let i = 0; i < scripts.length; i++) {
@@ -22,22 +20,30 @@ extract_resources_script = """
                 if (obj && obj.resources) {
                     const r = obj.resources;
                     const data = {
-                        metal: String(r.metal?.amount ?? '—'),
-                        crystal: String(r.crystal?.amount ?? '—'),
-                        deuterium: String(r.deuterium?.amount ?? '—'),
-                        energy: String(r.energy?.amount ?? '—'),
-                        prod_metal: String(r.metal?.production ?? '0'),
-                        prod_crystal: String(r.crystal?.production ?? '0'),
-                        prod_deuterium: String(r.deuterium?.production ?? '0')
+                        metal: r.metal?.amount ?? 0,
+                        crystal: r.crystal?.amount ?? 0,
+                        deuterium: r.deuterium?.amount ?? 0,
+                        energy: r.energy?.amount ?? 0,
+                        prod_metal: r.metal?.production ?? 0,
+                        prod_crystal: r.crystal?.production ?? 0,
+                        prod_deuterium: r.deuterium?.production ?? 0,
+                        capacity_metal: r.metal?.storage ?? 0,
+                        capacity_crystal: r.crystal?.storage ?? 0,
+                        capacity_deuterium: r.deuterium?.storage ?? 0
                     };
-                    debug("Datos extraídos del JSON con producción: " + JSON.stringify(data));
+                    console.log("[OGameDebug] Recursos extraídos:", data);
                     return data;
                 }
             }
         }
-    } catch(e) { debug("Error: " + e); }
-
-    return { metal:'—', crystal:'—', deuterium:'—', energy:'—', prod_metal:'0', prod_crystal:'0', prod_deuterium:'0' };
+    } catch(e) {
+        console.log("[OGameDebug] Error al leer recursos:", e);
+    }
+    return {
+        metal:0, crystal:0, deuterium:0, energy:0,
+        prod_metal:0, prod_crystal:0, prod_deuterium:0,
+        capacity_metal:0, capacity_crystal:0, capacity_deuterium:0
+    };
 })();
 """
 

@@ -1,6 +1,6 @@
 from datetime import timedelta
 import os
-#os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
+os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
 import time
 from PyQt6.QtWidgets import (
     QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox,
@@ -92,7 +92,7 @@ class BrowserWindow(QMainWindow):
     def add_sidebar(self):
         self.has_sidebar = True
         self.sidebar = QFrame()
-        self.sidebar.setFixedWidth(280)
+        self.sidebar.setFixedWidth(320)
         self.sidebar.setStyleSheet("""
             QFrame {
                 background-color: #111;
@@ -200,71 +200,31 @@ class BrowserWindow(QMainWindow):
     #   Actualizar recursos
     # ================================
     def update_resources(self):
-        """Abre una ventana minimizada con la misma sesión para extraer recursos."""
+        """Obtiene los recursos directamente desde la página actual (sin abrir ventana oculta)."""
         if not self.has_sidebar:
             return
 
-        # 🔹 Usar el mismo perfil de sesión que el navegador principal
-        profile = self.web.page().profile()
-
-        # Crear ventana secundaria (minimizada)
-        self.hidden_window = QMainWindow()
-        self.hidden_window.setWindowTitle("OGame Resource Fetcher")
-        self.hidden_window.resize(800, 600)
-        self.hidden_window.showMinimized()
-
-        self.hidden_web = QWebEngineView()
-        self.hidden_page = CustomWebPage(profile, self.hidden_web, main_window=self)
-        self.hidden_web.setPage(self.hidden_page)
-        self.hidden_window.setCentralWidget(self.hidden_web)
-
-        def after_load():
-            print("[DEBUG] Página de recursos cargada, ejecutando script...")
-            QTimer.singleShot(2000, lambda: self.hidden_web.page().runJavaScript(
-                extract_resources_script, self.handle_resource_data
-            ))
-            QTimer.singleShot(6000, self.hidden_window.close)
-
-        self.hidden_web.loadFinished.connect(after_load)
-
-        current_url = self.web.url().toString()
-        base_url = current_url.split("?")[0]
-        prod_url = base_url + "?page=ingame&component=resourcesettings"
-        print(f"[DEBUG] Cargando página de recursos: {prod_url}")
-        self.hidden_web.load(QUrl(prod_url))
+        print("[DEBUG] Ejecutando extract_resources_script directamente en la página actual...")
+        self.web.page().runJavaScript(extract_resources_script, self.handle_resource_data)
 
     def handle_resource_data(self, data):
-        print("[DEBUG] Datos recibidos de extract_resources_script:", data)
+        # print("[DEBUG] Datos recibidos de extract_resources_script:", data)
         if not data or not self.has_sidebar:
             return
 
-        def to_num(x):
-            try:
-                return float(str(x).replace(",", ".").strip())
-            except:
-                return 0.0
-
-        metal = to_num(data.get("metal"))
-        crystal = to_num(data.get("crystal"))
-        deuterium = to_num(data.get("deuterium"))
-        energy = to_num(data.get("energy"))
-
-        prod_metal = to_num(data.get("prod_metal"))
-        prod_crystal = to_num(data.get("prod_crystal"))
-        prod_deuterium = to_num(data.get("prod_deuterium"))
-
         self.current_resources = {
-            "metal": metal,
-            "crystal": crystal,
-            "deuterium": deuterium,
-            "energy": energy,
-            "prod_metal": prod_metal,
-            "prod_crystal": prod_crystal,
-            "prod_deuterium": prod_deuterium,
+            "metal": data.get("metal", 0),
+            "crystal": data.get("crystal", 0),
+            "deuterium": data.get("deuterium", 0),
+            "energy": data.get("energy", 0),
+            "prod_metal": data.get("prod_metal", 0),
+            "prod_crystal": data.get("prod_crystal", 0),
+            "prod_deuterium": data.get("prod_deuterium", 0),
+            "cap_metal": data.get("capacity_metal", 0),
+            "cap_crystal": data.get("capacity_crystal", 0),
+            "cap_deuterium": data.get("capacity_deuterium", 0),
             "last_update": time.time()
         }
-
-        print(f"[DEBUG] Estado recursos inicial: M={metal} (+{prod_metal}/s), C={crystal} (+{prod_crystal}/s), D={deuterium} (+{prod_deuterium}/s)")
 
         self.update_resource_labels()
 
@@ -274,11 +234,10 @@ class BrowserWindow(QMainWindow):
             self.timer_resources = QTimer(self)
             self.timer_resources.setInterval(1000)
             self.timer_resources.timeout.connect(self.increment_resources)
-
         self.timer_resources.start()
 
     def update_resource_labels(self):
-        """Actualiza los labels de la barra lateral con los valores actuales."""
+        """Actualiza los labels con valores actuales, barra de llenado y tiempo estimado."""
         r = getattr(self, "current_resources", None)
         if not r:
             return
@@ -286,15 +245,44 @@ class BrowserWindow(QMainWindow):
         def fmt(x):
             return f"{int(x):,}".replace(",", ".")
 
-        # cálculo de producción por hora
+        def tiempo_lleno(cant, cap, prod):
+            if prod <= 0 or cant >= cap:
+                return "—"
+            horas = (cap - cant) / (prod * 3600)
+            if horas < 1:
+                minutos = horas * 60
+                return f"{minutos:.1f}m"
+            else:
+                return f"{horas:.1f}h"
+
+        def barra(cant, cap, color):
+            if cap <= 0:
+                return ""
+            ratio = min(1, cant / cap)
+            filled = int(20 * ratio)
+            empty = 20 - filled
+            return f"<span style='color:{color};'>{'█'*filled}</span><span style='color:#444;'>{'░'*empty}</span>"
+
         pm = r["prod_metal"] * 3600
         pc = r["prod_crystal"] * 3600
         pd = r["prod_deuterium"] * 3600
 
-        # etiquetas con color y producción
-        self.metal_label.setText(f"⚙️ Metal: {fmt(r['metal'])} <span style='color:#0f0;'> (+{fmt(pm)}/h)</span>")
-        self.crystal_label.setText(f"💎 Cristal: {fmt(r['crystal'])} <span style='color:#0af;'> (+{fmt(pc)}/h)</span>")
-        self.deut_label.setText(f"🧪 Deuterio: {fmt(r['deuterium'])} <span style='color:#ff0;'> (+{fmt(pd)}/h)</span>")
+        tm = tiempo_lleno(r["metal"], r["cap_metal"], r["prod_metal"])
+        tc = tiempo_lleno(r["crystal"], r["cap_crystal"], r["prod_crystal"])
+        td = tiempo_lleno(r["deuterium"], r["cap_deuterium"], r["prod_deuterium"])
+
+        self.metal_label.setText(
+            f"⚙️ Metal: {fmt(r['metal'])} <span style='color:#0f0;'> (+{fmt(pm)}/h)</span> lleno en {tm}<br>"
+            f"{barra(r['metal'], r['cap_metal'], '#0f0')}"
+        )
+        self.crystal_label.setText(
+            f"💎 Cristal: {fmt(r['crystal'])} <span style='color:#0af;'> (+{fmt(pc)}/h)</span> lleno en {tc}<br>"
+            f"{barra(r['crystal'], r['cap_crystal'], '#0af')}"
+        )
+        self.deut_label.setText(
+            f"🧪 Deuterio: {fmt(r['deuterium'])} <span style='color:#ff0;'> (+{fmt(pd)}/h)</span> lleno en {td}<br>"
+            f"{barra(r['deuterium'], r['cap_deuterium'], '#ff0')}"
+        )
         self.energy_label.setText(f"⚡ Energía: {fmt(r['energy'])}")
 
     def increment_resources(self):
