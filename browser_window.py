@@ -1,3 +1,4 @@
+from datetime import timedelta
 import os
 #os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
 import time
@@ -10,7 +11,7 @@ from PyQt6.QtWebEngineCore import QWebEngineProfile
 from PyQt6.QtCore import QUrl, QTimer
 from PyQt6.QtGui import QIcon
 from custom_page import CustomWebPage
-from sidebar_updater import extract_meta_script, extract_resources_script, extract_queue_script
+from sidebar_updater import extract_meta_script, extract_resources_script, extract_queue_script, extract_auction_script
 
 class BrowserWindow(QMainWindow):
     def __init__(self, profile=None, url=None, main_window=None):
@@ -150,6 +151,11 @@ class BrowserWindow(QMainWindow):
         self.queue_text.setFixedHeight(180)
         sidebar_layout.addWidget(QLabel("📋 Colas activas:"))
         sidebar_layout.addWidget(self.queue_text)
+        self.auction_text = QTextEdit()
+        self.auction_text.setReadOnly(True)
+        self.auction_text.setFixedHeight(40)
+        sidebar_layout.addWidget(QLabel("🏆 Subasta actual:"))
+        sidebar_layout.addWidget(self.auction_text)
         # --- Botones ---
         self.refresh_btn = QPushButton("🔄 Actualizar recursos")
         self.refresh_btn.clicked.connect(self.update_resources)
@@ -157,9 +163,12 @@ class BrowserWindow(QMainWindow):
         self.update_queue_btn.clicked.connect(self.update_queues)
         self.save_btn = QPushButton("💾 Guardar HTML")
         self.save_btn.clicked.connect(self.save_html)
+        self.auction_btn = QPushButton("🏆 Actualizar subasta")
+        self.auction_btn.clicked.connect(self.update_auction)
         sidebar_layout.addWidget(self.refresh_btn)
         sidebar_layout.addWidget(self.update_queue_btn)
         sidebar_layout.addWidget(self.save_btn)
+        sidebar_layout.addWidget(self.auction_btn)
 
         self.update_meta_info()
         self.update_resources()
@@ -446,3 +455,104 @@ class BrowserWindow(QMainWindow):
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(html)
         self.web.page().toHtml(handle_html)
+
+    def update_auction(self):
+        """Abre una ventana secundaria con la página de subastas, obtiene datos y la cierra."""
+        if not self.has_sidebar:
+            return
+
+        profile = self.web.page().profile()
+        self.hidden_window = QMainWindow()
+        self.hidden_window.setWindowTitle("OGame Auction Fetcher")
+        self.hidden_window.resize(800, 600)
+        self.hidden_window.showMinimized()
+
+        self.hidden_web = QWebEngineView()
+        self.hidden_page = CustomWebPage(profile, self.hidden_web, main_window=self)
+        self.hidden_web.setPage(self.hidden_page)
+        self.hidden_window.setCentralWidget(self.hidden_web)
+
+        def after_load():
+            print("[DEBUG] Página de subasta cargada, ejecutando script...")
+            QTimer.singleShot(2000, lambda: self.hidden_web.page().runJavaScript(
+                extract_auction_script, self.handle_auction_data
+            ))
+            QTimer.singleShot(6000, self.hidden_window.close)
+
+        self.hidden_web.loadFinished.connect(after_load)
+
+        current_url = self.web.url().toString()
+        base_url = current_url.split("?")[0]
+        auction_url = base_url + "?page=ingame&component=traderAuctioneer"
+        print(f"[DEBUG] Cargando página de subastas: {auction_url}")
+        self.hidden_web.load(QUrl(auction_url))
+
+    def handle_auction_data(self, data):
+        print("[DEBUG] Datos de subasta:", data)
+        if not data or not self.has_sidebar:
+            return
+
+        self.last_auction_data = data
+        self.refresh_auction_text(data)
+
+        # Reiniciar temporizador de actualización automática
+        if hasattr(self, "auction_timer") and self.auction_timer.isActive():
+            self.auction_timer.stop()
+
+        self.auction_timer = QTimer(self)
+        self.auction_timer.setInterval(60000)  # cada 1m
+        self.auction_timer.timeout.connect(self.refresh_auction_timer)
+        self.auction_timer.start()
+
+    def refresh_auction_text(self, data):
+        """Actualiza el cuadro de texto con formato bonito."""
+        status = data.get('status', '—')
+        item = data.get('item', '—')
+        bid = data.get('currentBid', '—')
+        bidder = data.get('highestBidder', '—')
+        time_left = data.get('timeLeft', '—')
+
+        # Si el tiempo es un número (ej. "20792"), formatear
+        if isinstance(time_left, (int, float)) or str(time_left).isdigit():
+            try:
+                seconds = int(float(time_left))
+                td = str(timedelta(seconds=seconds))
+                # Convertir "HH:MM:SS" → "6h 24m 51s"
+                h, m, s = td.split(":")
+                time_left = f"{int(h)}h {int(m)}m"
+            except Exception:
+                pass
+
+        texto = f"🏆 {status}\n⏳ Tiempo restante: {time_left}"
+
+        # Mostrar detalles solo si la subasta está activa
+        if "activa" in status.lower():
+            self.auction_text.setFixedHeight(100)
+            texto += (
+                f"\n🧩 Ítem: {item}"
+                f"\n💰 Oferta actual: {bid}"
+                f"\n👤 Mejor postor: {bidder}"
+            )
+
+        self.auction_text.setPlainText(texto)
+
+    def refresh_auction_timer(self):
+        """Reejecuta la lectura desde la página oculta para mantener datos frescos."""
+        if not self.has_sidebar:
+            return
+
+        profile = self.web.page().profile()
+        hidden_web = QWebEngineView()
+        hidden_page = CustomWebPage(profile, hidden_web, main_window=self)
+        hidden_web.setPage(hidden_page)
+
+        def after_load():
+            QTimer.singleShot(1500, lambda: hidden_web.page().runJavaScript(
+                extract_auction_script, self.handle_auction_data
+            ))
+
+        current_url = self.web.url().toString()
+        base_url = current_url.split("?")[0]
+        auction_url = base_url + "?page=ingame&component=traderAuctioneer"
+        hidden_web.loadFinished.connect(after_load)
+        hidden_web.load(QUrl(auction_url))
