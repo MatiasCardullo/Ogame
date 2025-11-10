@@ -153,7 +153,7 @@ class BrowserWindow(QMainWindow):
         sidebar_layout.addWidget(self.queue_text)
         self.auction_text = QTextEdit()
         self.auction_text.setReadOnly(True)
-        self.auction_text.setFixedHeight(40)
+        self.auction_text.setFixedHeight(50)
         sidebar_layout.addWidget(QLabel("🏆 Subasta actual:"))
         sidebar_layout.addWidget(self.auction_text)
         # --- Botones ---
@@ -348,26 +348,50 @@ class BrowserWindow(QMainWindow):
         self.web.page().runJavaScript(check_script, after_check)
 
     def handle_queue_data(self, data):
-        if not self.has_sidebar:
-            return
-
-        previous_queues = getattr(self, "current_queues", [])
-
-        if not data:
+        if not data or not self.has_sidebar:
             self.current_queues = []
             self.queue_text.setText("— No hay construcciones activas —")
             self.timer_fast.stop()
             return
 
-        # Detectar inicio de nueva cola
-        new_queue_names = {q["name"] for q in data}
-        old_queue_names = {q["name"] for q in previous_queues}
-        if not old_queue_names.issuperset(new_queue_names):
-            # ⚙️ Si hay al menos una nueva cola, actualizar recursos
-            print("[DEBUG] Nueva cola detectada, actualizando recursos...")
-            QTimer.singleShot(1000, self.update_resources)
+        if not hasattr(self, "queue_memory"):
+            self.queue_memory = {}
 
-        self.current_queues = data
+        updated_queues = []
+        now = int(time.time())
+
+        for q in data:
+            key = f"{q['label']}|{q['name']}"
+            start = int(q.get("start", now))
+            end = int(q.get("end", now))
+
+            # ✅ Solo persistir tiempos para Hangar
+            if q["label"] == "🚀 Hangar":
+                if key in self.queue_memory:
+                    start = self.queue_memory[key]["start"]
+                    end = self.queue_memory[key]["end"]
+                else:
+                    if end - start < 10:
+                        end = now + 30
+                    self.queue_memory[key] = {"start": start, "end": end}
+            else:
+                # Edificios e investigaciones: tiempos absolutos
+                self.queue_memory[key] = {"start": start, "end": end}
+
+            updated_queues.append({
+                "label": q["label"],
+                "name": q["name"],
+                "level": q.get("level", ""),
+                "start": start,
+                "end": end
+            })
+
+        # Limpiar colas terminadas
+        for k in list(self.queue_memory.keys()):
+            if all(k != f"{q['label']}|{q['name']}" for q in updated_queues):
+                del self.queue_memory[k]
+
+        self.current_queues = updated_queues
         self.timer_fast.start()
         self.update_queue_timers()
 
@@ -414,8 +438,8 @@ class BrowserWindow(QMainWindow):
 
         # ⚙️ Si terminó alguna, actualizar colas y recursos
         if finished_any:
-            self.update_queues()
             self.update_resources()
+            self.update_queues()
 
     def show_notification(self, title, message):
         """Muestra una notificación de sistema y una alternativa en la sidebar."""
@@ -444,18 +468,8 @@ class BrowserWindow(QMainWindow):
                 print("[DEBUG] Error al mostrar notificación en sidebar:", e)
 
     # ================================
-    #   Guardar HTML
+    #   Subasta
     # ================================
-    def save_html(self):
-        def handle_html(html):
-            path, _ = QFileDialog.getSaveFileName(
-                self, "Guardar HTML", "pagina.html", "Archivos HTML (*.html)"
-            )
-            if path:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(html)
-        self.web.page().toHtml(handle_html)
-
     def update_auction(self):
         """Abre una ventana secundaria con la página de subastas, obtiene datos y la cierra."""
         if not self.has_sidebar:
@@ -556,3 +570,27 @@ class BrowserWindow(QMainWindow):
         auction_url = base_url + "?page=ingame&component=traderAuctioneer"
         hidden_web.loadFinished.connect(after_load)
         hidden_web.load(QUrl(auction_url))
+    # ================================
+    #   Guardar HTML y exit
+    # ================================
+    def save_html(self):
+        def handle_html(html):
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Guardar HTML", "pagina.html", "Archivos HTML (*.html)"
+            )
+            if path:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(html)
+        self.web.page().toHtml(handle_html)
+
+    def closeEvent(self, event):
+        # 🔹 Si esta ventana pertenece a un main_window, limpiarla de su lista
+        if self.main_window and self in self.main_window.popups:
+            self.main_window.popups.remove(self)
+        # 🔹 Cerrar también cualquier popup abierto desde esta misma
+        for popup in getattr(self, "popups", []):
+            try:
+                popup.close()
+            except Exception:
+                pass
+        super().closeEvent(event)

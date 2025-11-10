@@ -44,9 +44,7 @@ extract_resources_script = """
 # --- Extrae colas de construcción / investigación / flota ---
 extract_queue_script = """
 (function() {
-    function debug(msg) {
-        try { console.log('[OGameDebug]', msg); } catch(e) {}
-    }
+    function debug(msg) { try { console.log('[OGameDebug]', msg); } catch(e) {} }
 
     const sections = {
         '🏗️ Edificio': '#productionboxbuildingcomponent .construction.active',
@@ -58,60 +56,42 @@ extract_queue_script = """
 
     for (const [label, selector] of Object.entries(sections)) {
         const box = document.querySelector(selector);
-        if (!box) {
-            debug(label + ' → no encontrado');
+        if (!box) continue;
+
+        const name = box.querySelector('th')?.textContent?.trim() || '';
+        if (!name) continue;
+
+        // 🔹 Edificios e investigaciones: tiempos absolutos
+        if (label !== '🚀 Hangar') {
+            const timeEl = box.querySelector('time.countdown');
+            const time = timeEl?.textContent?.trim() || '';
+            const start = parseInt(timeEl?.dataset.start || '0');
+            const end = parseInt(timeEl?.dataset.end || '0');
+            if (name && time && start && end) {
+                result.push({ label, name, time, start, end });
+            }
             continue;
         }
 
-        const name = box.querySelector('th')?.textContent?.trim() || '';
-        const level = box.querySelector('.level')?.textContent?.trim() || '';
+        // 🚀 Hangar: sin timestamps absolutos
+        const timeEl = box.querySelector('time.shipyardCountdown, time.shipyardCountdownUnit');
+        const timeStr = timeEl?.textContent?.trim() || '';
+        if (!timeStr) continue;
 
-        let timeEl = box.querySelector('time.shipyardCountdown, time.shipyardCountdownUnit, time.countdown');
-        let time = timeEl?.textContent?.trim() || '';
-        let start = parseInt(timeEl?.dataset.start || '0');
-        let end = parseInt(timeEl?.dataset.end || '0');
+        // Parsear duración desde texto (por ejemplo "3m 41s")
+        const m = timeStr.match(/(?:(\\d+)h)?\\s*(?:(\\d+)m)?\\s*(?:(\\d+)s)?/);
+        const h = parseInt(m?.[1] || '0');
+        const min = parseInt(m?.[2] || '0');
+        const sec = parseInt(m?.[3] || '0');
+        const duration = h*3600 + min*60 + sec;
 
-        debug(label + ' encontrado: ' + name + ' (time=' + time + ', start=' + start + ', end=' + end + ')');
+        const now = Math.floor(Date.now()/1000);
+        const start = now;
+        const end = now + duration;
 
-        // --- Si no hay dataset válido, buscar dentro de los <script> ---
-        if (!end || end <= start) {
-            const scripts = Array.from(document.getElementsByTagName('script'));
-            for (const s of scripts) {
-                const txt = s.textContent;
+        debug('Hangar detectado: ' + name + ' (' + duration + 's)');
 
-                // 🛰 Buscar la línea del Hangar: CountdownTimer('shipyardCountdown', start, url, null, true, minutos)
-                const m = txt.match(/new\\s+CountdownTimer\\(['"]shipyardCountdown['"],\\s*(\\d+),[^,]*,[^,]*,\\s*true,\\s*(\\d+)\\)/);
-                if (m) {
-                    start = parseInt(m[1]);
-                    const minutes = parseInt(m[2]);
-                    end = start + minutes * 60;
-                    debug('→ Detectado CountdownTimer del hangar: start=' + start + ', duracionMin=' + minutes + ', end=' + end);
-                    break;
-                }
-
-                // 🔧 Si no se encontró, intentar con CountdownTimerUnit
-                const m2 = txt.match(/new\\s+CountdownTimerUnit\\(['"]shipyardCountdownUnit['"],\\s*(\\d+),\\s*(\\d+),/);
-                if (m2) {
-                    start = parseInt(m2[1]);
-                    end = parseInt(m2[2]);
-                    debug('→ Detectado CountdownTimerUnit: start=' + start + ', end=' + end);
-                    break;
-                }
-            }
-        }
-
-        if (end && start && end > start) {
-            const remaining = Math.max(0, end - Math.floor(Date.now() / 1000));
-            const minutes = Math.floor(remaining / 60);
-            const seconds = remaining % 60;
-            time = `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
-        }
-
-        debug(label + ' → FINAL: ' + name + ' | start=' + start + ' | end=' + end + ' | time=' + time);
-
-        if (name && end && end > start) {
-            result.push({ label, name, level, time, start, end });
-        }
+        result.push({ label, name, time: timeStr, start, end });
     }
 
     return result;
