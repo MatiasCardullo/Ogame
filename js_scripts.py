@@ -49,33 +49,48 @@ extract_resources_script = """
 })();
 """
 
-# --- Extrae colas de construcción / investigación / flota ---
+# --- Extrae colas de construcción / investigación / flota / forma de vida ---
 extract_queue_script = """
 (function() {
-    function debug(msg) { try { console.log('[OGameDebug]', msg); } catch(e) {} }
+    function debug(msg) { 
+        try { 
+            console.log('[OGameDebug] extract_queue_script:', msg); 
+        } catch(e) {} 
+    }
 
     const sections = {
         '🏗️ Edificio': '#productionboxbuildingcomponent .construction.active',
         '🧬 Investigación': '#productionboxresearchcomponent .construction.active',
+        '🌿 Edificio Forma de Vida': '#productionboxlfbuildingcomponent .construction.active',
+        '🧬 Investigación Forma de Vida': '#productionboxlfresearchcomponent .construction.active',
         '🚀 Hangar': '#productionboxshipyardcomponent .construction.active'
     };
+    
+    debug('Iniciando búsqueda de colas. Secciones a buscar: ' + Object.keys(sections).join(', '));
 
     let result = [];
 
     for (const [label, selector] of Object.entries(sections)) {
         const box = document.querySelector(selector);
-        if (!box) continue;
+        if (!box) {
+            debug('No encontrado: ' + label + ' (selector: ' + selector + ')');
+            continue;
+        }
 
         const name = box.querySelector('th')?.textContent?.trim() || '';
-        if (!name) continue;
+        if (!name) {
+            debug('No hay nombre en ' + label);
+            continue;
+        }
 
-        // 🔹 Edificios e investigaciones: tiempos absolutos
+        // 🔹 Edificios e investigaciones: tiempos absolutos (incluyendo forma de vida)
         if (label !== '🚀 Hangar') {
             const timeEl = box.querySelector('time.countdown');
             const time = timeEl?.textContent?.trim() || '';
             const start = parseInt(timeEl?.dataset.start || '0');
             const end = parseInt(timeEl?.dataset.end || '0');
             if (name && time && start && end) {
+                debug('Encontrado ' + label + ': ' + name + ' (tiempo: ' + time + ')');
                 result.push({ label, name, time, start, end });
             }
             continue;
@@ -84,7 +99,10 @@ extract_queue_script = """
         // 🚀 Hangar: sin timestamps absolutos
         const timeEl = box.querySelector('time.shipyardCountdown, time.shipyardCountdownUnit');
         const timeStr = timeEl?.textContent?.trim() || '';
-        if (!timeStr) continue;
+        if (!timeStr) {
+            debug('No hay tiempo en Hangar');
+            continue;
+        }
 
         // Parsear duración desde texto (por ejemplo "3m 41s")
         const m = timeStr.match(/(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?/);

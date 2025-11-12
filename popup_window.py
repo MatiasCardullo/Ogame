@@ -374,7 +374,8 @@ class PopupWindow(QMainWindow):
             if remaining <= 0 and name not in self.finished_queue_names:
                 self.finished_queue_names.add(name)
                 finished_any = True
-                self.show_notification("✅ Cola completada", f"{label}: {name} {level}")
+                if self.main_window:
+                    self.main_window.show_notification("✅ Cola completada", f"{label}: {name} {level}")
 
         self.queue_text.setHtml("<br><br>".join(lines))
 
@@ -382,23 +383,6 @@ class PopupWindow(QMainWindow):
             self.update_resources()
             self.update_queues()
 
-    def show_notification(self, title, message):
-        print(f"[NOTIFY] {title}: {message}")
-
-        if hasattr(self, "tray_icon") and self.tray_icon.isSystemTrayAvailable():
-            self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 5000)
-
-        if hasattr(self, "sidebar"):
-            try:
-                if not hasattr(self, "_notif_label"):
-                    from PyQt6.QtCore import QTimer
-                    self._notif_label = QLabel()
-                    self._notif_label.setStyleSheet("color: #0f0; font-weight: bold;")
-                    self.sidebar.layout().insertWidget(0, self._notif_label)
-                self._notif_label.setText(f"🔔 {title}: {message}")
-                QTimer.singleShot(8000, lambda: self._notif_label.setText(""))
-            except Exception as e:
-                print("[DEBUG] Error al mostrar notificación en sidebar:", e)
 
     # --- Utilities ---
     def save_html(self):

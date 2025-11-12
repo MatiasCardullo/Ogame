@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout, QLabel, QTextEdit, QPushButton
+from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout, QLabel, QTextEdit, QPushButton, QSystemTrayIcon
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
 from PyQt6.QtCore import QUrl, QTimer, Qt
@@ -52,6 +52,12 @@ class MainWindow(QMainWindow):
             color: #EEE;
         """)
         self.main_panel.setLayout(main_layout)
+        
+        # Notification label (will be shown at the top of main panel)
+        self._notif_label = QLabel("")
+        self._notif_label.setStyleSheet("color: #0f0; font-weight: bold; padding: 8px;")
+        main_layout.addWidget(self._notif_label)
+        
         self.main_label = QLabel("🪐 Panel Principal de Planetas (en desarrollo)")
         main_layout.addWidget(self.main_label)
         self.tabs.addTab(self.main_panel, "📊 Panel Principal")
@@ -71,12 +77,26 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self.tabs)
 
+        # Tray icon for notifications
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(QIcon.fromTheme("applications-games"))
+        self.tray_icon.setVisible(True)
+
         # planet data storage
         self.planets_data = {}
         self.timer_global = QTimer(self)
         self.timer_global.setInterval(1000)
         self.timer_global.timeout.connect(self.increment_all_planets)
         self.timer_global.start()
+
+        # Queue watcher: central notification for queues received from popups
+        self.queue_timer = QTimer(self)
+        self.queue_timer.setInterval(1000)
+        self.queue_timer.timeout.connect(self.check_queues)
+        self.queue_timer.start()
+
+        # set to keep track of already-notified queue entries to avoid duplicates
+        self.notified_queues = set()
 
         # Auction periodic refresh
         self.auction_timer = None
@@ -208,6 +228,41 @@ class MainWindow(QMainWindow):
         }
         self.refresh_main_panel()
 
+    def check_queues(self):
+        """Scan stored planets' queues and notify when any queue finishes.
+
+        This runs centrally in the main window so notifications still happen
+        even if the popup that reported the queue is closed.
+        """
+        now = int(time.time())
+        active_keys = set()
+
+        for planet, data in list(self.planets_data.items()):
+            queues = data.get("queues") or []
+            for entry in queues:
+                label = entry.get("label")
+                name = entry.get("name")
+                start = int(entry.get("start", now))
+                end = int(entry.get("end", now))
+                key = f"{planet}|{label}|{name}|{start}|{end}"
+                active_keys.add(key)
+
+                if end <= now and key not in self.notified_queues:
+                    # Queue finished -> notify and mark as notified
+                    try:
+                        self.show_notification("✅ Cola completada", f"{planet}: {label}: {name}")
+                    except Exception as e:
+                        print("[DEBUG] Error al enviar notificación desde MainWindow:", e)
+                    self.notified_queues.add(key)
+
+        # Prune notified_queues to keep memory bounded: remove keys no longer active
+        to_remove = [k for k in self.notified_queues if k not in active_keys]
+        for k in to_remove:
+            try:
+                self.notified_queues.remove(k)
+            except KeyError:
+                pass
+
     # --- Auction moved here ---
     def update_auction(self):
         # Create a hidden web view to fetch auction info using the shared profile
@@ -247,3 +302,32 @@ class MainWindow(QMainWindow):
 
         texto = f"{status}\nTiempo restante: {time_left}\nItem: {item}\nOferta: {bid}\nMejor postor: {bidder}"
         self.auction_text.setPlainText(texto)
+
+    def show_notification(self, title, message):
+        """Muestra notificación centralizada en la ventana principal.
+        
+        Notifica a través de:
+        1. System tray (si disponible)
+        2. Panel principal (etiqueta verde en la parte superior)
+        
+        Args:
+            title: Título de la notificación
+            message: Contenido del mensaje
+        """
+        print(f"[NOTIFY] {title}: {message}")
+
+        # Mostrar en bandeja del sistema
+        if hasattr(self, "tray_icon") and self.tray_icon.isSystemTrayAvailable():
+            self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 5000)
+
+        # Mostrar en etiqueta del panel principal
+        try:
+            if not hasattr(self, "_notif_label"):
+                self._notif_label = QLabel()
+                self._notif_label.setStyleSheet("color: #0f0; font-weight: bold;")
+            self._notif_label.setText(f"🔔 {title}: {message}")
+            # Auto-limpiar después de 8 segundos
+            QTimer.singleShot(8000, lambda: self._notif_label.setText(""))
+        except Exception as e:
+            print("[DEBUG] Error al mostrar notificación en panel:", e)
+
