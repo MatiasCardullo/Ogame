@@ -50,6 +50,11 @@ class BrowserWindow(QMainWindow):
         self.layout = QHBoxLayout()
 
         if not self.is_popup:
+            self.timer_global = QTimer(self)
+            self.timer_global.setInterval(1000)  # cada segundo
+            self.timer_global.timeout.connect(self.increment_all_planets)
+            self.timer_global.start()
+
             # ✅ Ventana principal con tabs
             self.tabs = QTabWidget()
             self.layout.addWidget(self.tabs)
@@ -67,6 +72,11 @@ class BrowserWindow(QMainWindow):
             self.main_label = QLabel("🪐 Panel Principal de Planetas (en desarrollo)")
             main_layout.addWidget(self.main_label)
             self.main_panel.setLayout(main_layout)
+            self.main_panel.setStyleSheet("""
+                background-color: #000;
+                color: #EEE;
+            """)
+
             self.tabs.addTab(self.main_panel, "📊 Panel Principal")
         else:
             # 🚀 Popup simple solo con el navegador
@@ -104,6 +114,7 @@ class BrowserWindow(QMainWindow):
         def after_check(is_ingame):
             self.toggle_sidebar(is_ingame)
             if is_ingame:
+                self.update_meta_info()      # ✅ nuevo
                 self.update_queues()
         self.web.page().runJavaScript(script, after_check)
 
@@ -207,33 +218,130 @@ class BrowserWindow(QMainWindow):
                 widget.deleteLater()
 
     def refresh_main_panel(self):
-        """Actualiza el contenido del panel principal con todos los planetas conocidos."""
         if not hasattr(self, "main_label"):
             return
 
-        html = "<h3>🪐 Estado de Planetas</h3>"
+        html = """
+        <style>
+            body {
+                background-color: #000;
+                color: #EEE;
+            }
+            .planet-container {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 12px;
+            }
+            .planet-box {
+                background-color: #111;
+                color: #EEE;
+                border: 2px solid #222;
+                border-radius: 10px;
+                padding: 8px 12px;
+                width: 300px;
+                font-family: Consolas;
+            }
+            .bar {
+                font-family: monospace;
+            }
+            .section {
+                margin-top: 6px;
+                border-top: 1px solid #333;
+                padding-top: 4px;
+            }
+        </style>
+        <h2>🌌 Panel Principal — Recursos y Colas</h2>
+        <div class='planet-container'>
+        """
+
         if not getattr(self, "planets_data", {}):
-            html += "<p>No hay datos aún.</p>"
+            html += "<p>No hay datos de planetas aún.</p>"
         else:
             for planet, data in self.planets_data.items():
                 r = data["resources"]
                 q = data["queues"]
-                html += f"<b>{planet}</b> (última actualización: {data['last_update']})<br>"
-                html += (
-                    f"⚙️ Metal: {int(r['metal']):,} | 💎 Cristal: {int(r['crystal']):,} | "
-                    f"🧪 Deuterio: {int(r['deuterium']):,} | ⚡ Energía: {int(r['energy']):,}<br>"
-                )
-                if q:
-                    html += "📋 Colas activas:<br>"
-                    for item in q:
-                        html += f"• {item['label']} → {item['name']}<br>"
-                else:
-                    html += "📋 Sin colas activas<br>"
-                html += "<hr>"
+                html += f"<div class='planet-box'><b>🪐 {planet}</b> <small>(actualizado {data['last_update']})</small><br>"
 
-        self.main_label.setTextFormat(Qt.TextFormat.RichText)  # RichText
+                # --- Recursos con barra idéntica a la sidebar ---
+                def barra(cant, cap, color):
+                    if cap <= 0:
+                        return ""
+                    ratio = min(1, cant / cap)
+                    filled = int(20 * ratio)
+                    empty = 20 - filled
+                    return f"<span style='color:{color};'>{'█'*filled}</span><span style='color:#444;'>{'░'*empty}</span>"
+
+                def fmt(x):
+                    return f"{int(x):,}".replace(",", ".")
+
+                def tiempo_lleno(cant, cap, prod):
+                    if prod <= 0 or cant >= cap:
+                        return "—"
+                    horas = (cap - cant) / (prod * 3600)
+                    if horas < 1:
+                        minutos = horas * 60
+                        return f"{minutos:.1f}m"
+                    else:
+                        return f"{horas:.1f}h"
+
+                pm = r["prod_metal"] * 3600
+                pc = r["prod_crystal"] * 3600
+                pd = r["prod_deuterium"] * 3600
+
+                tm = tiempo_lleno(r["metal"], r["cap_metal"], r["prod_metal"])
+                tc = tiempo_lleno(r["crystal"], r["cap_crystal"], r["prod_crystal"])
+                td = tiempo_lleno(r["deuterium"], r["cap_deuterium"], r["prod_deuterium"])
+
+                html += (
+                    f"<div class='section'>⚙️ Metal: {fmt(r['metal'])} (+{fmt(pm)}/h) lleno en {tm}<br>"
+                    f"<span class='bar'>{barra(r['metal'], r['cap_metal'], '#0f0')}</span></div>"
+                    f"<div class='section'>💎 Cristal: {fmt(r['crystal'])} (+{fmt(pc)}/h) lleno en {tc}<br>"
+                    f"<span class='bar'>{barra(r['crystal'], r['cap_crystal'], '#0af')}</span></div>"
+                    f"<div class='section'>🧪 Deuterio: {fmt(r['deuterium'])} (+{fmt(pd)}/h) lleno en {td}<br>"
+                    f"<span class='bar'>{barra(r['deuterium'], r['cap_deuterium'], '#ff0')}</span></div>"
+                    f"<div class='section'>⚡ Energía: {fmt(r['energy'])}</div>"
+                )
+
+                # --- Colas activas ---
+                if q:
+                    html += "<div class='section'>📋 Colas activas:<br>"
+                    now = int(time.time())
+                    for entry in q:
+                        start = entry["start"]
+                        end = entry["end"]
+                        remaining = max(0, end - now)
+                        minutes, seconds = divmod(remaining, 60)
+                        progress = 0 if end <= start else min(100, int(((now - start) / (end - start)) * 100))
+                        color = "#0f0" if progress < 60 else "#ff0" if progress < 90 else "#f00"
+                        filled = int(20 * progress / 100)
+                        bar = f"<span style='color:{color};'>{'█'*filled}</span><span style='color:#444;'>{'░'*(20-filled)}</span>"
+                        html += f"{entry['label']}: {entry['name']} — {minutes}m {seconds:02d}s<br>[{bar}] {progress}%<br>"
+                    html += "</div>"
+                else:
+                    html += "<div class='section'>📋 Sin colas activas</div>"
+
+                html += "</div>"
+
+        html += "</div>"  # cerrar planet-container
+        self.main_label.setTextFormat(Qt.TextFormat.RichText)
         self.main_label.setText(html)
-    
+
+    def increment_all_planets(self):
+        """Incrementa recursos en todos los planetas almacenados y actualiza panel."""
+        if not hasattr(self, "planets_data"):
+            return
+        now = time.time()
+        for p, data in self.planets_data.items():
+            r = data["resources"]
+            elapsed = now - r.get("last_update", now)
+            if elapsed <= 0:
+                continue
+            r["last_update"] = now
+            r["metal"] += r["prod_metal"] * elapsed
+            r["crystal"] += r["prod_crystal"] * elapsed
+            r["deuterium"] += r["prod_deuterium"] * elapsed
+        self.refresh_main_panel()
+
     def update_planet_data(self, planet, resources, queues):
         """Recibe datos desde popups (otros planetas) y los muestra en el Panel Principal."""
         if not hasattr(self, "planets_data"):
