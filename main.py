@@ -1,10 +1,10 @@
 from PyQt6.QtWidgets import QApplication
-from browser_window import BrowserWindow
+from main_window import MainWindow
 import sys
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     url = "https://lobby.ogame.gameforge.com/es_ES/"
-    window = BrowserWindow(url=url)
+    window = MainWindow(url=url)
     window.show()
     sys.exit(app.exec())
