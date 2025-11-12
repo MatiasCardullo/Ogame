@@ -13,7 +13,7 @@ class CustomWebPage(QWebEnginePage):
         # Importar localmente (solo cuando se necesita) para evitar import circular
         from browser_window import BrowserWindow
 
-        popup = BrowserWindow(profile=self.profile(), main_window=self.main_window)
+        popup = BrowserWindow(profile=self.profile(), main_window=self.main_window, is_popup=True)
         popup.setWindowTitle("OGame Popup")
         popup.show()
 

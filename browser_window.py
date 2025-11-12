@@ -1,22 +1,23 @@
 from datetime import timedelta
 import os
-os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
+#os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
 import time
 from PyQt6.QtWidgets import (
-    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox,
+    QMainWindow, QTabWidget, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox,
     QToolBar, QPushButton, QLabel, QFrame, QFileDialog, QTextEdit, QSystemTrayIcon
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
-from PyQt6.QtCore import QUrl, QTimer
+from PyQt6.QtCore import Qt ,QUrl, QTimer
 from PyQt6.QtGui import QIcon
 from custom_page import CustomWebPage
 from sidebar_updater import extract_meta_script, extract_resources_script, extract_queue_script, extract_auction_script
 
 class BrowserWindow(QMainWindow):
-    def __init__(self, profile=None, url=None, main_window=None):
+    def __init__(self, profile=None, url=None, main_window=None, is_popup=False):
         super().__init__()
         self.main_window = main_window
+        self.is_popup = is_popup
         self.popups = []
         self.has_sidebar = False
         self.setWindowTitle("OGame Browser")
@@ -47,7 +48,30 @@ class BrowserWindow(QMainWindow):
         # --- Layout principal ---
         self.container = QWidget()
         self.layout = QHBoxLayout()
-        self.layout.addWidget(self.web)
+
+        if not self.is_popup:
+            # ✅ Ventana principal con tabs
+            self.tabs = QTabWidget()
+            self.layout.addWidget(self.tabs)
+
+            # --- Tab 1: Navegador ---
+            self.browser_tab = QWidget()
+            browser_layout = QVBoxLayout()
+            browser_layout.addWidget(self.web)
+            self.browser_tab.setLayout(browser_layout)
+            self.tabs.addTab(self.browser_tab, "🌐 Navegador")
+
+            # --- Tab 2: Panel Principal ---
+            self.main_panel = QWidget()
+            main_layout = QVBoxLayout()
+            self.main_label = QLabel("🪐 Panel Principal de Planetas (en desarrollo)")
+            main_layout.addWidget(self.main_label)
+            self.main_panel.setLayout(main_layout)
+            self.tabs.addTab(self.main_panel, "📊 Panel Principal")
+        else:
+            # 🚀 Popup simple solo con el navegador
+            self.layout.addWidget(self.web)
+
         self.container.setLayout(self.layout)
         self.setCentralWidget(self.container)
 
@@ -182,6 +206,46 @@ class BrowserWindow(QMainWindow):
                 self.layout.removeWidget(widget)
                 widget.deleteLater()
 
+    def refresh_main_panel(self):
+        """Actualiza el contenido del panel principal con todos los planetas conocidos."""
+        if not hasattr(self, "main_label"):
+            return
+
+        html = "<h3>🪐 Estado de Planetas</h3>"
+        if not getattr(self, "planets_data", {}):
+            html += "<p>No hay datos aún.</p>"
+        else:
+            for planet, data in self.planets_data.items():
+                r = data["resources"]
+                q = data["queues"]
+                html += f"<b>{planet}</b> (última actualización: {data['last_update']})<br>"
+                html += (
+                    f"⚙️ Metal: {int(r['metal']):,} | 💎 Cristal: {int(r['crystal']):,} | "
+                    f"🧪 Deuterio: {int(r['deuterium']):,} | ⚡ Energía: {int(r['energy']):,}<br>"
+                )
+                if q:
+                    html += "📋 Colas activas:<br>"
+                    for item in q:
+                        html += f"• {item['label']} → {item['name']}<br>"
+                else:
+                    html += "📋 Sin colas activas<br>"
+                html += "<hr>"
+
+        self.main_label.setTextFormat(Qt.TextFormat.RichText)  # RichText
+        self.main_label.setText(html)
+    
+    def update_planet_data(self, planet, resources, queues):
+        """Recibe datos desde popups (otros planetas) y los muestra en el Panel Principal."""
+        if not hasattr(self, "planets_data"):
+            self.planets_data = {}
+
+        self.planets_data[planet] = {
+            "resources": resources,
+            "queues": queues,
+            "last_update": time.strftime("%H:%M:%S")
+        }
+        self.refresh_main_panel()
+
     # ================================
     #   Actualizaciones manuales
     # ================================
@@ -235,6 +299,19 @@ class BrowserWindow(QMainWindow):
             self.timer_resources.setInterval(1000)
             self.timer_resources.timeout.connect(self.increment_resources)
         self.timer_resources.start()
+
+        # --- Notificar al main_window (si es popup) ---
+        if self.is_popup and self.main_window:
+            planet_name = getattr(self, "planet_label", None)
+            if planet_name:
+                planet = self.planet_label.text().replace("🪐 Planeta: ", "").strip()
+            else:
+                planet = "Desconocido"
+            self.main_window.update_planet_data(
+                planet=planet,
+                resources=self.current_resources,
+                queues=getattr(self, "current_queues", [])
+            )
 
     def update_resource_labels(self):
         """Actualiza los labels con valores actuales, barra de llenado y tiempo estimado."""
@@ -558,6 +635,7 @@ class BrowserWindow(QMainWindow):
         auction_url = base_url + "?page=ingame&component=traderAuctioneer"
         hidden_web.loadFinished.connect(after_load)
         hidden_web.load(QUrl(auction_url))
+    
     # ================================
     #   Guardar HTML y exit
     # ================================
