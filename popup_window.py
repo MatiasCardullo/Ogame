@@ -9,7 +9,7 @@ from PyQt6.QtGui import QIcon
 import time
 import os
 from custom_page import CustomWebPage
-from js_scripts import extract_meta_script, extract_resources_script, extract_queue_script
+from js_scripts import extract_meta_script, extract_resources_script, extract_queue_functions
 
 
 class PopupWindow(QMainWindow):
@@ -280,29 +280,142 @@ class PopupWindow(QMainWindow):
 
     # --- Queues ---
     def update_queues(self):
+        print(f"[DEBUG] update_queues called, has_sidebar={getattr(self, 'has_sidebar', None)}")
         if not self.has_sidebar:
+            print("[DEBUG] update_queues: no sidebar, returning")
             return
 
-        check_script = """
+        # Verificar secciones individualmente.
+        # Distinguimos entre "present" (la sección existe en el DOM) y "active"
+        # (hay construcciones/colas activas). Si las secciones no están presentes
+        # no tocamos las colas cargadas previamente. Si las secciones existen pero
+        # no hay elementos activos -> limpiamos las colas.
+        detect_script = """
             (function() {
-                return !!document.querySelector('#productionboxbuildingcomponent, #productionboxresearchcomponent, #productionboxshipyardcomponent');
+                return {
+                    building_present: !!document.querySelector('#productionboxbuildingcomponent'),
+                    building: !!document.querySelector('#productionboxbuildingcomponent .construction.active'),
+                    research_present: !!document.querySelector('#productionboxresearchcomponent'),
+                    research: !!document.querySelector('#productionboxresearchcomponent .construction.active'),
+                    lf_building_present: !!document.querySelector('#productionboxlfbuildingcomponent'),
+                    lf_building: !!document.querySelector('#productionboxlfbuildingcomponent .construction.active'),
+                    lf_research_present: !!document.querySelector('#productionboxlfresearchcomponent'),
+                    lf_research: !!document.querySelector('#productionboxlfresearchcomponent .construction.active'),
+                    shipyard_present: !!document.querySelector('#productionboxshipyardcomponent'),
+                    shipyard: !!document.querySelector('#productionboxshipyardcomponent .construction.active')
+                };
             })();
         """
 
-        def after_check(has_sections):
-            if has_sections:
-                self.web.page().runJavaScript(extract_queue_script, self.handle_queue_data)
-            else:
-                print("[DEBUG] Página sin secciones de cola, se omite actualización.")
+        def after_detect(det):
+            print(f"[DEBUG] after_detect called, det={det}")
+            if not det:
+                # No pudimos obtener información del DOM -> conservamos colas previas
+                print("[DEBUG] after_detect: det is falsy. Manteniendo colas previas.")
+                return
 
-        self.web.page().runJavaScript(check_script, after_check)
+            # ¿Hay alguna sección visible/presente en la página?
+            present_flags = (
+                det.get('building_present') or det.get('research_present') or
+                det.get('lf_building_present') or det.get('lf_research_present') or
+                det.get('shipyard_present')
+            )
+
+            print(f"[DEBUG] present_flags={present_flags}")
+            if not present_flags:
+                # No se hallan las secciones en el DOM -> no modificar colas cargadas previamente
+                print("[DEBUG] after_detect: no queue sections present in DOM. Manteniendo colas previas.")
+                return
+
+            # Si las secciones están presentes pero no hay colas activas, limpiar.
+            active_flags = (
+                det.get('building') or det.get('research') or
+                det.get('lf_building') or det.get('lf_research') or
+                det.get('shipyard')
+            )
+
+            print(f"[DEBUG] active_flags={active_flags}")
+            if not active_flags:
+                print('[DEBUG] Secciones presentes pero sin colas activas -> limpiar colas')
+                # Pasamos el mapa de presencia para que handle_queue_data sepa
+                # qué componentes están presentes y solo borre colas de esos.
+                present_map = {
+                    'building': bool(det.get('building_present')),
+                    'research': bool(det.get('research_present')),
+                    'lf_building': bool(det.get('lf_building_present')),
+                    'lf_research': bool(det.get('lf_research_present')),
+                    'shipyard': bool(det.get('shipyard_present')),
+                }
+                self.handle_queue_data({'present': present_map, 'queues': []})
+                return
+
+            # Crear un script dinámicamente SOLO con secciones activas
+            parts = []
+            if det.get('building'):
+                parts.append('extract_building()')
+            if det.get('research'):
+                parts.append('extract_research()')
+            if det.get('lf_building'):
+                parts.append('extract_lf_building()')
+            if det.get('lf_research'):
+                parts.append('extract_lf_research()')
+            if det.get('shipyard'):
+                parts.append('extract_shipyard()')
+
+            if not parts:
+                # Por seguridad (aunque ya comprobamos active_flags), limpiar
+                print("[DEBUG] after_detect: parts empty a pesar de active_flags. Limpiando colas.")
+                self.handle_queue_data([])
+                return
+
+            print(f"[DEBUG] after_detect: extracting parts={parts}")
+
+            # Construir un objeto `present` para pasar al JS y devolverlo junto con las colas
+            present_js = (
+                f"let present = {{building: {str(bool(det.get('building_present'))).lower()}, "
+                f"research: {str(bool(det.get('research_present'))).lower()}, "
+                f"lf_building: {str(bool(det.get('lf_building_present'))).lower()}, "
+                f"lf_research: {str(bool(det.get('lf_research_present'))).lower()}, "
+                f"shipyard: {str(bool(det.get('shipyard_present'))).lower()}}};"
+            )
+
+            dynamic_script = f"""
+            (function() {{
+                {present_js}
+                let final = [];
+                {extract_queue_functions}
+                return {{present: present, queues: final.concat({",".join(parts)})}};
+            }})();
+            """
+
+            print("[DEBUG] after_detect: running dynamic_script")
+            self.web.page().runJavaScript(dynamic_script, self.handle_queue_data)
+
+        self.web.page().runJavaScript(detect_script, after_detect)
 
     def handle_queue_data(self, data):
+        print(f"[DEBUG] handle_queue_data called. has_sidebar={getattr(self,'has_sidebar',None)}, data={data}")
         if not data or not self.has_sidebar:
+            print("[DEBUG] handle_queue_data: no data or no sidebar -> clearing current_queues and stopping timer")
             self.current_queues = []
             self.queue_text.setText("— No hay construcciones activas —")
-            self.timer_fast.stop()
+            try:
+                self.timer_fast.stop()
+            except Exception:
+                pass
             return
+
+        # Normalizar entrada: puede ser una lista (legacy) o un dict {'present':..., 'queues':[...]}
+        present_map = None
+        queues = None
+        if isinstance(data, dict) and 'queues' in data:
+            present_map = data.get('present', {}) or {}
+            queues = data.get('queues', []) or []
+        elif isinstance(data, list):
+            queues = data
+        else:
+            # Forma inesperada -> tratar como vacío
+            queues = []
 
         if not hasattr(self, "queue_memory"):
             self.queue_memory = {}
@@ -310,7 +423,8 @@ class PopupWindow(QMainWindow):
         updated_queues = []
         now = int(time.time())
 
-        for q in data:
+        for q in queues:
+            print(f"[DEBUG] Processing queue item: {q}")
             key = f"{q['label']}|{q['name']}"
             start = int(q.get("start", now))
             end = int(q.get("end", now))
@@ -334,12 +448,89 @@ class PopupWindow(QMainWindow):
                 "end": end
             })
 
+        # Si recibimos un `present_map`, conservar colas previas de componentes
+        # que ya no están presentes en el DOM (no fueron detectadas ahora).
+        if present_map is not None:
+            for mem_key, mem_val in list(self.queue_memory.items()):
+                # si la memoria ya está en updated_queues la ignoramos
+                if any(mem_key == f"{q['label']}|{q['name']}" for q in updated_queues):
+                    continue
+                label_part = mem_key.split('|', 1)[0]
+                comp = None
+                l = label_part.lower()
+                if 'edificio' in l or '🏗️' in label_part:
+                    comp = 'building'
+                elif 'investig' in l or '🧬' in label_part:
+                    comp = 'research'
+                elif 'hangar' in l or '🚀' in label_part:
+                    comp = 'shipyard'
+                elif 'vida' in l or 'lf' in l or 'forma' in l:
+                    comp = 'lf'
+
+                # si el componente NO está presente ahora (present_map False), lo preservamos
+                if comp is not None and not (
+                    present_map.get(comp) if comp != 'lf' else (
+                        present_map.get('lf_building') or present_map.get('lf_research')
+                    )
+                ):
+                    # reconstruir label/name desde la key y tomar start/end de queue_memory
+                    try:
+                        _, name = mem_key.split('|', 1)
+                    except Exception:
+                        name = mem_key
+                    updated_queues.append({
+                        'label': label_part,
+                        'name': name,
+                        'level': self.queue_memory[mem_key].get('level', ''),
+                        'start': self.queue_memory[mem_key]['start'],
+                        'end': self.queue_memory[mem_key]['end']
+                    })
+
+        # Eliminar solo las claves de memoria asociadas a componentes que estén presentes
+        def detect_component_from_label(label):
+            l = label.lower()
+            if 'edificio' in l or '🏗️' in label:
+                return 'building'
+            if 'investig' in l or '🧬' in label:
+                return 'research'
+            if 'hangar' in l or '🚀' in label:
+                return 'shipyard'
+            if 'vida' in l or 'lf' in l or 'forma' in l:
+                return 'lf'
+            return None
+
         for k in list(self.queue_memory.keys()):
+            # si la entrada no aparece en las colas actualizadas, decidir si eliminarla
             if all(k != f"{q['label']}|{q['name']}" for q in updated_queues):
-                del self.queue_memory[k]
+                label = k.split('|', 1)[0]
+                comp = detect_component_from_label(label)
+                remove = False
+                if present_map is None:
+                    # comportamiento legacy: eliminar
+                    remove = True
+                else:
+                    if comp == 'building':
+                        remove = bool(present_map.get('building'))
+                    elif comp == 'research':
+                        remove = bool(present_map.get('research'))
+                    elif comp == 'shipyard':
+                        remove = bool(present_map.get('shipyard'))
+                    elif comp == 'lf':
+                        remove = bool(present_map.get('lf_building') or present_map.get('lf_research'))
+                    else:
+                        # no reconocemos el tipo -> conservamos la entrada para evitar pérdidas
+                        remove = False
+
+                if remove:
+                    print(f"[DEBUG] Removing stale queue_memory key: {k} (component={comp})")
+                    del self.queue_memory[k]
 
         self.current_queues = updated_queues
-        self.timer_fast.start()
+        print(f"[DEBUG] Updated current_queues ({len(updated_queues)}): {self.current_queues}")
+        try:
+            self.timer_fast.start()
+        except Exception:
+            pass
         self.update_queue_timers()
 
     def update_queue_timers(self):

@@ -50,78 +50,86 @@ extract_resources_script = """
 """
 
 # --- Extrae colas de construcción / investigación / flota / forma de vida ---
-extract_queue_script = """
-(function() {
-    function debug(msg) { 
-        try { 
-            console.log('[OGameDebug] extract_queue_script:', msg); 
-        } catch(e) {} 
+extract_queue_functions = """
+    function extract_building() {
+        const box = document.querySelector('#productionboxbuildingcomponent .construction.active');
+        if (!box) return [];
+        const name = box.querySelector('th')?.textContent?.trim() || "";
+        const timeEl = box.querySelector('time.countdown');
+        if (!timeEl) return [];
+        return [{
+            label: "🏗️ Edificio",
+            name: name,
+            start: parseInt(timeEl.dataset.start || "0"),
+            end: parseInt(timeEl.dataset.end || "0")
+        }];
     }
 
-    const sections = {
-        '🏗️ Edificio': '#productionboxbuildingcomponent .construction.active',
-        '🧬 Investigación': '#productionboxresearchcomponent .construction.active',
-        '🌿 Edificio Forma de Vida': '#productionboxlfbuildingcomponent .construction.active',
-        '🧬 Investigación Forma de Vida': '#productionboxlfresearchcomponent .construction.active',
-        '🚀 Hangar': '#productionboxshipyardcomponent .construction.active'
-    };
-    
-    debug('Iniciando búsqueda de colas. Secciones a buscar: ' + Object.keys(sections).join(', '));
+    function extract_research() {
+        const box = document.querySelector('#productionboxresearchcomponent .construction.active');
+        if (!box) return [];
+        const name = box.querySelector('th')?.textContent?.trim() || "";
+        const timeEl = box.querySelector('time.countdown');
+        if (!timeEl) return [];
+        return [{
+            label: "🧬 Investigación",
+            name: name,
+            start: parseInt(timeEl.dataset.start || "0"),
+            end: parseInt(timeEl.dataset.end || "0")
+        }];
+    }
 
-    let result = [];
+    function extract_lf_building() {
+        const box = document.querySelector('#productionboxlfbuildingcomponent .construction.active');
+        if (!box) return [];
+        const name = box.querySelector('th')?.textContent?.trim() || "";
+        const timeEl = box.querySelector('time.countdown');
+        if (!timeEl) return [];
+        return [{
+            label: "🌿 Edificio Forma de Vida",
+            name: name,
+            start: parseInt(timeEl.dataset.start || "0"),
+            end: parseInt(timeEl.dataset.end || "0")
+        }];
+    }
 
-    for (const [label, selector] of Object.entries(sections)) {
-        const box = document.querySelector(selector);
-        if (!box) {
-            debug('No encontrado: ' + label + ' (selector: ' + selector + ')');
-            continue;
-        }
+    function extract_lf_research() {
+        const box = document.querySelector('#productionboxlfresearchcomponent .construction.active');
+        if (!box) return [];
+        const name = box.querySelector('th')?.textContent?.trim() || "";
+        const timeEl = box.querySelector('time.countdown');
+        if (!timeEl) return [];
+        return [{
+            label: "🧬 Investigación Forma de Vida",
+            name: name,
+            start: parseInt(timeEl.dataset.start || "0"),
+            end: parseInt(timeEl.dataset.end || "0")
+        }];
+    }
+
+    function extract_shipyard() {
+        const box = document.querySelector('#productionboxshipyardcomponent .construction.active');
+        if (!box) return [];
 
         const name = box.querySelector('th')?.textContent?.trim() || '';
-        if (!name) {
-            debug('No hay nombre en ' + label);
-            continue;
-        }
-
-        // 🔹 Edificios e investigaciones: tiempos absolutos (incluyendo forma de vida)
-        if (label !== '🚀 Hangar') {
-            const timeEl = box.querySelector('time.countdown');
-            const time = timeEl?.textContent?.trim() || '';
-            const start = parseInt(timeEl?.dataset.start || '0');
-            const end = parseInt(timeEl?.dataset.end || '0');
-            if (name && time && start && end) {
-                debug('Encontrado ' + label + ': ' + name + ' (tiempo: ' + time + ')');
-                result.push({ label, name, time, start, end });
-            }
-            continue;
-        }
-
-        // 🚀 Hangar: sin timestamps absolutos
         const timeEl = box.querySelector('time.shipyardCountdown, time.shipyardCountdownUnit');
-        const timeStr = timeEl?.textContent?.trim() || '';
-        if (!timeStr) {
-            debug('No hay tiempo en Hangar');
-            continue;
-        }
+        const str = timeEl?.textContent?.trim() || "";
+        if (!str) return [];
 
-        // Parsear duración desde texto (por ejemplo "3m 41s")
-        const m = timeStr.match(/(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?/);
-        const h = parseInt(m?.[1] || '0');
-        const min = parseInt(m?.[2] || '0');
-        const sec = parseInt(m?.[3] || '0');
-        const duration = h*3600 + min*60 + sec;
+        const match = str.match(/(?:(\\d+)h)?\\s*(?:(\\d+)m)?\\s*(?:(\\d+)s)?/);
+        const h = parseInt(match?.[1] || '0');
+        const m = parseInt(match?.[2] || '0');
+        const s = parseInt(match?.[3] || '0');
+        const duration = h*3600 + m*60 + s;
 
         const now = Math.floor(Date.now()/1000);
-        const start = now;
-        const end = now + duration;
-
-        debug('Hangar detectado: ' + name + ' (' + duration + 's)');
-
-        result.push({ label, name, time: timeStr, start, end });
+        return [{
+            label: "🚀 Hangar",
+            name: name,
+            start: now,
+            end: now + duration
+        }];
     }
-
-    return result;
-})();
 """
 
 extract_auction_script = """
