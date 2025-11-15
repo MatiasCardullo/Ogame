@@ -145,7 +145,6 @@ class PopupWindow(QMainWindow):
         sidebar_layout.addWidget(self.save_btn)
 
         self.update_meta_info()
-        self.update_resources()
         self.update_queues()
 
     def remove_sidebar(self):

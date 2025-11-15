@@ -162,7 +162,19 @@ class MainWindow(QMainWindow):
                 start = entry.get('start', now)
                 end = entry.get('end', now)
                 remaining = max(0, end - now)
-                minutes, seconds = divmod(remaining, 60)
+                d, r = divmod(remaining, 86400) #días
+                h, r = divmod(r, 3600)         # horas
+                m, s = divmod(r, 60)          # minutos
+                if d > 0:
+                    parts = []
+                    parts.append(f"{d}d")
+                    if h > 0:
+                        parts.append(f"{h}h")
+                    if m > 0:
+                        parts.append(f"{m}m")
+                    time_text = " ".join(parts)
+                else:
+                    time_text = f"{h}:{m:02d}:{s:02d}"
                 progress = 0
                 if end > start:
                     progress = min(100, max(0, int(((now - start) / (end - start)) * 100)))
@@ -171,7 +183,7 @@ class MainWindow(QMainWindow):
                 block = '█' * filled
                 empty_block = '░' * (12 - filled)
                 bar = f"<span style='color:{color};'>{block}</span><span style='color:#555;'>{empty_block}</span>"
-                return f"{label} {name} ({minutes}m {seconds:02d}s) [{bar}] {progress}%"
+                return f"{label} {name} ({time_text}) [{bar}] {progress}%"
 
             planets_list = list(self.planets_data.keys())
             now = int(time.time())
@@ -188,7 +200,7 @@ class MainWindow(QMainWindow):
 
             # Show research queues separate from table
             if all_research_queues:
-                html += "<div class='research-section'><b>🧬 Investigaciones (Compartidas):</b><br>"
+                html += "<div class='research-section'><b>🧬 Investigaciones:</b><br>"
                 for key, entry in all_research_queues.items():
                     html += format_queue_entry(entry, now) + "<br>"
                 html += "</div>"
