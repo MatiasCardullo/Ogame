@@ -106,13 +106,13 @@ class PopupWindow(QMainWindow):
 
         # Basic info
         self.player_label = QLabel("👤 Jugador: —")
-        self.planet_label = QLabel("🪐 Planeta: —")
-        self.coords_label = QLabel("📍 Coordenadas: —")
         self.universe_label = QLabel("🌌 Universo: —")
+        self.coords_label = QLabel("📍 Coordenadas: —")
+        self.planet_label = QLabel("🪐 Planeta: —")
         sidebar_layout.addWidget(self.player_label)
-        sidebar_layout.addWidget(self.planet_label)
-        sidebar_layout.addWidget(self.coords_label)
         sidebar_layout.addWidget(self.universe_label)
+        sidebar_layout.addWidget(self.coords_label)
+        sidebar_layout.addWidget(self.planet_label)
         sidebar_layout.addSpacing(10)
 
         # Resources
@@ -163,10 +163,14 @@ class PopupWindow(QMainWindow):
     def handle_meta_data(self, data):
         if not data or not self.has_sidebar:
             return
+        
         self.player_label.setText(f"👤 Jugador: {data.get('ogame-player-name', '—')}")
-        self.planet_label.setText(f"🪐 Planeta: {data.get('ogame-planet-name', '—')}")
-        self.coords_label.setText(f"📍 Coordenadas: {data.get('ogame-planet-coordinates', '—')}")
         self.universe_label.setText(f"🌌 Universo: {data.get('ogame-universe-name', '—')}")
+        coords = f"📍 Coordenadas: {data.get('ogame-planet-coordinates', '—')}"
+        if self.coords_label.text != coords:
+            self.coords_label.setText(coords)
+            self.update_resources()
+        self.planet_label.setText(f"🪐 Planeta: {data.get('ogame-planet-name', '—')}")
 
     def update_resources(self):
         if not self.has_sidebar:
@@ -374,15 +378,12 @@ class PopupWindow(QMainWindow):
             if remaining <= 0 and name not in self.finished_queue_names:
                 self.finished_queue_names.add(name)
                 finished_any = True
-                if self.main_window:
-                    self.main_window.show_notification("✅ Cola completada", f"{label}: {name} {level}")
 
         self.queue_text.setHtml("<br><br>".join(lines))
 
         if finished_any:
             self.update_resources()
             self.update_queues()
-
 
     # --- Utilities ---
     def save_html(self):

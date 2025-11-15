@@ -106,102 +106,157 @@ class MainWindow(QMainWindow):
 
     # --- Panels and planets ---
     def refresh_main_panel(self):
-        # Build a richer HTML view similar to the previous implementation
+        # Build HTML table: planets as columns, resources/queues as rows
         html = """
         <style>
-            body { background-color: #000; color: #EEE; }
-            .planet-container { display:flex; flex-wrap:wrap; gap:12px; }
-            .planet-box { background-color:#111; color:#EEE; border:2px solid #222; border-radius:10px; padding:8px 12px; width:300px; font-family:Consolas; }
+            body { background-color: #000; color: #EEE; font-family: Consolas; }
+            table { border-collapse: collapse; margin-top: 10px; width: 100%; }
+            th { background-color: #222; color: #0f0; border: 1px solid #333; padding: 8px; text-align: center; }
+            td { background-color: #111; color: #EEE; border: 1px solid #333; padding: 6px; font-size: 12px; }
             .bar { font-family: monospace; }
-            .section { margin-top:6px; border-top:1px solid #333; padding-top:4px; }
+            .research-section { background-color: #1a1a2e; padding: 8px; margin-top: 10px; border: 1px solid #0af; }
         </style>
         <h2>🌌 Panel Principal — Recursos y Colas</h2>
-        <div class='planet-container'>
         """
 
         if not getattr(self, "planets_data", {}):
             html += "<p>No hay datos de planetas aún.</p>"
         else:
-            for planet, data in self.planets_data.items():
-                r = data.get("resources", {})
-                q = data.get("queues", [])
-                html += f"<div class='planet-box'><b>🪐 {planet}</b> <small>(actualizado {data.get('last_update','—')})</small><br>"
-
-                def barra(cant, cap, color):
-                    try:
-                        if cap <= 0:
-                            return ""
-                    except Exception:
+            # Helper functions
+            def barra(cant, cap, color):
+                try:
+                    if cap <= 0:
                         return ""
                     ratio = min(1, cant / cap)
-                    filled = int(20 * ratio)
-                    empty = 20 - filled
+                    filled = int(15 * ratio)
+                    empty = 15 - filled
                     block = '█' * filled
                     empty_block = '░' * empty
                     return f"<span style='color:{color};'>{block}</span><span style='color:#444;'>{empty_block}</span>"
+                except Exception:
+                    return ""
 
-                def fmt(x):
-                    try:
-                        return f"{int(x):,}".replace(",", ".")
-                    except Exception:
-                        return str(x)
+            def fmt(x):
+                try:
+                    return f"{int(x):,}".replace(",", ".")
+                except Exception:
+                    return str(x)
 
-                def tiempo_lleno(cant, cap, prod):
-                    try:
-                        if prod <= 0 or cant >= cap:
-                            return "—"
-                        horas = (cap - cant) / (prod * 3600)
-                        if horas < 1:
-                            minutos = horas * 60
-                            return f"{minutos:.1f}m"
-                        else:
-                            return f"{horas:.1f}h"
-                    except Exception:
+            def tiempo_lleno(cant, cap, prod):
+                try:
+                    if prod <= 0 or cant >= cap:
                         return "—"
+                    horas = (cap - cant) / (prod * 3600)
+                    if horas < 1:
+                        minutos = horas * 60
+                        return f"{minutos:.1f}m"
+                    else:
+                        return f"{horas:.1f}h"
+                except Exception:
+                    return "—"
 
-                pm = r.get("prod_metal", 0) * 3600
-                pc = r.get("prod_crystal", 0) * 3600
-                pd = r.get("prod_deuterium", 0) * 3600
+            def format_queue_entry(entry, now):
+                """Format a queue entry with progress bar."""
+                label = entry.get('label', '')
+                name = entry.get('name', '')
+                start = entry.get('start', now)
+                end = entry.get('end', now)
+                remaining = max(0, end - now)
+                minutes, seconds = divmod(remaining, 60)
+                progress = 0
+                if end > start:
+                    progress = min(100, max(0, int(((now - start) / (end - start)) * 100)))
+                color = "#0f0" if progress < 60 else "#ff0" if progress < 90 else "#f00"
+                filled = int(12 * progress / 100)
+                block = '█' * filled
+                empty_block = '░' * (12 - filled)
+                bar = f"<span style='color:{color};'>{block}</span><span style='color:#555;'>{empty_block}</span>"
+                return f"{label} {name} ({minutes}m {seconds:02d}s) [{bar}] {progress}%"
 
-                tm = tiempo_lleno(r.get('metal', 0), r.get('cap_metal', 0), r.get('prod_metal', 0))
-                tc = tiempo_lleno(r.get('crystal', 0), r.get('cap_crystal', 0), r.get('prod_crystal', 0))
-                td = tiempo_lleno(r.get('deuterium', 0), r.get('cap_deuterium', 0), r.get('prod_deuterium', 0))
+            planets_list = list(self.planets_data.keys())
+            now = int(time.time())
 
-                html += (
-                    f"<div class='section'>⚙️ Metal: {fmt(r.get('metal',0))} (+{fmt(pm)}/h) lleno en {tm}<br>"
-                    f"<span class='bar'>{barra(r.get('metal',0), r.get('cap_metal',0), '#0f0')}</span></div>"
-                    f"<div class='section'>💎 Cristal: {fmt(r.get('crystal',0))} (+{fmt(pc)}/h) lleno en {tc}<br>"
-                    f"<span class='bar'>{barra(r.get('crystal',0), r.get('cap_crystal',0), '#0af')}</span></div>"
-                    f"<div class='section'>🧪 Deuterio: {fmt(r.get('deuterium',0))} (+{fmt(pd)}/h) lleno en {td}<br>"
-                    f"<span class='bar'>{barra(r.get('deuterium',0), r.get('cap_deuterium',0), '#ff0')}</span></div>"
-                    f"<div class='section'>⚡ Energía: {fmt(r.get('energy',0))}</div>"
-                )
+            # Collect research queues globally (they're shared across planets, show once)
+            all_research_queues = {}
+            for planet, data in self.planets_data.items():
+                q = data.get("queues", [])
+                for entry in q:
+                    if "Investigación" in entry.get("label", ""):
+                        key = f"{entry.get('label')}|{entry.get('name')}"
+                        if key not in all_research_queues:
+                            all_research_queues[key] = entry
 
-                # Queues
-                if q:
-                    html += "<div class='section'>📋 Colas activas:<br>"
-                    now = int(time.time())
-                    for entry in q:
-                        start = entry.get('start', now)
-                        end = entry.get('end', now)
-                        remaining = max(0, end - now)
-                        minutes, seconds = divmod(remaining, 60)
-                        progress = 0
-                        if end > start:
-                            progress = min(100, max(0, int(((now - start) / (end - start)) * 100)))
-                        color = "#0f0" if progress < 60 else "#ff0" if progress < 90 else "#f00"
-                        filled = int(20 * progress / 100)
-                        block = '█' * filled
-                        empty_block = '░' * (20 - filled)
-                        bar = f"<span style='color:{color};'>{block}</span><span style='color:#444;'>{empty_block}</span>"
-                        html += f"{entry.get('label','')}: {entry.get('name','')} — {minutes}m {seconds:02d}s<br>[{bar}] {progress}%<br>"
-                    html += "</div>"
-                else:
-                    html += "<div class='section'>📋 Sin colas activas</div>"
-
+            # Show research queues separate from table
+            if all_research_queues:
+                html += "<div class='research-section'><b>🧬 Investigaciones (Compartidas):</b><br>"
+                for key, entry in all_research_queues.items():
+                    html += format_queue_entry(entry, now) + "<br>"
                 html += "</div>"
 
-        html += "</div>"  # cerrar planet-container
+            # Start table with resources and per-planet queues
+            html += "<table><tr><th>Recurso</th>"
+            for planet in planets_list:
+                html += f"<th>{planet}</th>"
+            html += "</tr>"
+
+            # Resource rows
+            resource_names = ["Metal", "Cristal", "Deuterio", "Energía"]
+            resource_keys = [("metal", "cap_metal", "prod_metal", "#0f0"),
+                           ("crystal", "cap_crystal", "prod_crystal", "#0af"),
+                           ("deuterium", "cap_deuterium", "prod_deuterium", "#ff0"),
+                           ("energy", None, None, "#f0f")]
+
+            for name, res_keys in zip(resource_names, resource_keys):
+                html += f"<tr><td><b>{name}</b></td>"
+                for planet in planets_list:
+                    data = self.planets_data.get(planet, {})
+                    r = data.get("resources", {})
+                    if res_keys[0] == "energy":
+                        html += f"<td>⚡ {fmt(r.get('energy', 0))}</td>"
+                    else:
+                        res_key, cap_key, prod_key, color = res_keys
+                        cant = r.get(res_key, 0)
+                        cap = r.get(cap_key, 1)
+                        prod = r.get(prod_key, 0)
+                        prod_h = prod * 3600
+                        ttf = tiempo_lleno(cant, cap, prod)
+                        bar_html = barra(cant, cap, color)
+                        html += f"<td>{fmt(cant)} (+{fmt(prod_h)}/h) lleno en {ttf}<br>{bar_html}</td>"
+                html += "</tr>"
+
+            # Collect queue types once
+            queue_types = {"🏗️ Construcciones": [], "🚀 Hangar": [], "🌿 Forma de Vida": []}
+            for planet in planets_list:
+                data = self.planets_data.get(planet, {})
+                q = data.get("queues", [])
+                for entry in q:
+                    label = entry.get("label", "")
+                    if "Investigación" in label:
+                        continue  # Skip research (already shown above)
+                    elif "Forma de Vida" in label:
+                        queue_types["🌿 Forma de Vida"].append((planet, entry))
+                    elif "Hangar" in label:
+                        queue_types["🚀 Hangar"].append((planet, entry))
+                    elif "Edificio" in label:
+                        queue_types["🏗️ Construcciones"].append((planet, entry))
+
+            # Add queue rows
+            for queue_type, entries in queue_types.items():
+                if entries:
+                    html += f"<tr><td><b>{queue_type}</b></td>"
+                    for planet in planets_list:
+                        planet_queues = [e for p, e in entries if p == planet]
+                        if planet_queues:
+                            html += "<td>"
+                            for entry in planet_queues:
+                                html += format_queue_entry(entry, now) + "<br>"
+                            html += "</td>"
+                        else:
+                            html += "<td>—</td>"
+                    html += "</tr>"
+
+            html += "</table>"
+
         self.main_label.setTextFormat(Qt.TextFormat.RichText)
         self.main_label.setText(html)
 
