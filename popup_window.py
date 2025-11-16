@@ -8,33 +8,42 @@ from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QIcon
 import time
 import os
+import hashlib
+
 from custom_page import CustomWebPage
 from js_scripts import extract_meta_script, extract_resources_script, extract_queue_functions
 
 
+def make_queue_id(label, name, planet_name, coords, start, end):
+    """Genera un id SHA1 único para una cola."""
+    base = f"{label}|{name}|{planet_name}|{coords}|{int(start)}|{int(end)}"
+    return hashlib.sha1(base.encode("utf-8")).hexdigest()
+
+
 class PopupWindow(QMainWindow):
-    """Ventana tipo popup: contiene toolbar y sidebar.
-    Mantiene lógica de recursos, colas y notificaciones.
-    """
+    """Ventana popup OGame: sidebar + navegador + colas + recursos"""
+
     def __init__(self, profile=None, url=None, main_window=None):
         super().__init__()
         self.main_window = main_window
         self.setWindowTitle("OGame Popup")
         self.resize(1000, 700)
 
+        # Profile persistente (para mantener sesión)
         profile = profile or QWebEngineProfile("ogame_profile", self)
         profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
         os.makedirs("profile_data", exist_ok=True)
         profile.setPersistentStoragePath(os.path.abspath("profile_data"))
         profile.setCachePath(os.path.abspath("profile_data/cache"))
 
+        # WebEngineView
         self.web = QWebEngineView()
         self.page = CustomWebPage(profile, self.web, main_window=self.main_window)
         self.web.setPage(self.page)
         if url:
             self.web.load(QUrl(url))
 
-        # Toolbar
+        # Toolbar simple
         self.toolbar = QToolBar()
         self.addToolBar(self.toolbar)
         for text, func in [("<", self.web.back), (">", self.web.forward), ("↻", self.web.reload)]:
@@ -42,14 +51,14 @@ class PopupWindow(QMainWindow):
             btn.clicked.connect(func)
             self.toolbar.addWidget(btn)
 
-        # Layout
+        # Layout principal
         self.container = QWidget()
         self.layout = QHBoxLayout()
         self.layout.addWidget(self.web)
         self.container.setLayout(self.layout)
         self.setCentralWidget(self.container)
 
-        # Sidebar state
+        # Estado del sidebar
         self.has_sidebar = False
 
         # Timers
@@ -57,18 +66,26 @@ class PopupWindow(QMainWindow):
         self.timer_fast.setInterval(1000)
         self.timer_fast.timeout.connect(self.update_queue_timers)
 
+        self.web.loadFinished.connect(self.check_if_ingame)
+
+        # Notificaciones
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(QIcon.fromTheme("applications-games"))
         self.tray_icon.setVisible(True)
 
-        self.web.loadFinished.connect(self.check_if_ingame)
+        # Memoria de colas: dict[id] = queue_dict
+        self.queue_memory = {}
 
+    # -------------------------------------------------------------
+    # Detectar si estamos dentro del juego (ogame-player-name meta)
+    # -------------------------------------------------------------
     def check_if_ingame(self):
         script = """
             (function() {
                 const metas = document.getElementsByTagName('meta');
                 for (let m of metas) {
-                    if (m.name && m.name.startsWith('ogame-player-name')) return true;
+                    if (m.name && m.name.startsWith('ogame-player-name')) 
+                        return true;
                 }
                 return false;
             })();
@@ -82,6 +99,9 @@ class PopupWindow(QMainWindow):
 
         self.web.page().runJavaScript(script, after_check)
 
+    # -------------------------------------------------------------
+    # Sidebar ON/OFF
+    # -------------------------------------------------------------
     def toggle_sidebar(self, is_ingame):
         if is_ingame and not self.has_sidebar:
             self.add_sidebar()
@@ -104,42 +124,47 @@ class PopupWindow(QMainWindow):
         self.layout.addWidget(self.sidebar)
         self.sidebar.setLayout(sidebar_layout)
 
-        # Basic info
+        # Meta info
         self.player_label = QLabel("👤 Jugador: —")
         self.universe_label = QLabel("🌌 Universo: —")
         self.coords_label = QLabel("📍 Coordenadas: —")
         self.planet_label = QLabel("🪐 Planeta: —")
+
         sidebar_layout.addWidget(self.player_label)
         sidebar_layout.addWidget(self.universe_label)
         sidebar_layout.addWidget(self.coords_label)
         sidebar_layout.addWidget(self.planet_label)
         sidebar_layout.addSpacing(10)
 
-        # Resources
+        # Recursos
         self.metal_label = QLabel("⚙️ Metal: —")
         self.crystal_label = QLabel("💎 Cristal: —")
         self.deut_label = QLabel("🧪 Deuterio: —")
         self.energy_label = QLabel("⚡ Energía: —")
+
         sidebar_layout.addWidget(self.metal_label)
         sidebar_layout.addWidget(self.crystal_label)
         sidebar_layout.addWidget(self.deut_label)
         sidebar_layout.addWidget(self.energy_label)
         sidebar_layout.addSpacing(10)
 
-        # Queues
+        # Colas
         self.queue_text = QTextEdit()
         self.queue_text.setReadOnly(True)
-        self.queue_text.setFixedHeight(180)
+        self.queue_text.setFixedHeight(220)
         sidebar_layout.addWidget(QLabel("📋 Colas activas:"))
         sidebar_layout.addWidget(self.queue_text)
 
-        # Buttons
+        # Botones
         self.refresh_btn = QPushButton("🔄 Actualizar recursos")
         self.refresh_btn.clicked.connect(self.update_resources)
+
         self.update_queue_btn = QPushButton("🏗️ Actualizar colas")
         self.update_queue_btn.clicked.connect(self.update_queues)
+
         self.save_btn = QPushButton("💾 Guardar HTML")
         self.save_btn.clicked.connect(self.save_html)
+
         sidebar_layout.addWidget(self.refresh_btn)
         sidebar_layout.addWidget(self.update_queue_btn)
         sidebar_layout.addWidget(self.save_btn)
@@ -155,22 +180,36 @@ class PopupWindow(QMainWindow):
                 self.layout.removeWidget(widget)
                 widget.deleteLater()
 
-    # --- Meta / resources ---
+    # -------------------------------------------------------------
+    # METADATA
+    # -------------------------------------------------------------
     def update_meta_info(self):
         self.web.page().runJavaScript(extract_meta_script, self.handle_meta_data)
 
     def handle_meta_data(self, data):
         if not data or not self.has_sidebar:
             return
-        
-        self.player_label.setText(f"👤 Jugador: {data.get('ogame-player-name', '—')}")
-        self.universe_label.setText(f"🌌 Universo: {data.get('ogame-universe-name', '—')}")
-        coords = f"📍 Coordenadas: {data.get('ogame-planet-coordinates', '—')}"
-        if self.coords_label.text != coords:
-            self.coords_label.setText(coords)
-            self.update_resources()
-        self.planet_label.setText(f"🪐 Planeta: {data.get('ogame-planet-name', '—')}")
 
+        player = data.get('ogame-player-name', '—')
+        universe = data.get('ogame-universe-name', '—')
+        coords = data.get('ogame-planet-coordinates', '—')
+        planet = data.get('ogame-planet-name', '—')
+
+        self.current_planet_coords = coords
+        self.current_planet_name = planet
+
+        self.player_label.setText(f"👤 Jugador: {player}")
+        self.universe_label.setText(f"🌌 Universo: {universe}")
+        self.coords_label.setText(f"📍 Coordenadas: {coords}")
+        self.planet_label.setText(f"🪐 Planeta: {planet}")
+
+        # Update UI and send current data to MainWindow
+        self.update_queue_timers()
+        self.update_resources()
+
+    # -------------------------------------------------------------
+    # RECURSOS
+    # -------------------------------------------------------------
     def update_resources(self):
         if not self.has_sidebar:
             return
@@ -185,17 +224,21 @@ class PopupWindow(QMainWindow):
             "crystal": data.get("crystal", 0),
             "deuterium": data.get("deuterium", 0),
             "energy": data.get("energy", 0),
+
             "prod_metal": data.get("prod_metal", 0),
             "prod_crystal": data.get("prod_crystal", 0),
             "prod_deuterium": data.get("prod_deuterium", 0),
+
             "cap_metal": data.get("capacity_metal", 0),
             "cap_crystal": data.get("capacity_crystal", 0),
             "cap_deuterium": data.get("capacity_deuterium", 0),
+
             "last_update": time.time()
         }
 
         self.update_resource_labels()
 
+        # Timer para incrementar recursos
         if hasattr(self, "timer_resources"):
             self.timer_resources.stop()
         else:
@@ -204,13 +247,17 @@ class PopupWindow(QMainWindow):
             self.timer_resources.timeout.connect(self.increment_resources)
         self.timer_resources.start()
 
-        # Notify main window if popup
+        # 🔥 Enviar datos al MainWindow con la nueva API (incluye queues desde memoria)
         if self.main_window:
-            planet = self.planet_label.text().replace("🪐 Planeta: ", "").strip()
+            # pasar las queues actuales como lista ordenada (descartando claves internas)
+            queues_list = list(self.queue_memory.values())
+            # ordenar por end asc
+            queues_list.sort(key=lambda q: q.get("end", time.time()))
             self.main_window.update_planet_data(
-                planet=planet or "Desconocido",
+                planet_name=self.current_planet_name,
+                coords=self.current_planet_coords,
                 resources=self.current_resources,
-                queues=getattr(self, "current_queues", [])
+                queues=queues_list
             )
 
     def update_resource_labels(self):
@@ -226,10 +273,8 @@ class PopupWindow(QMainWindow):
                 return "—"
             horas = (cap - cant) / (prod * 3600)
             if horas < 1:
-                minutos = horas * 60
-                return f"{minutos:.1f}m"
-            else:
-                return f"{horas:.1f}h"
+                return f"{horas*60:.1f}m"
+            return f"{horas:.1f}h"
 
         def barra(cant, cap, color):
             if cap <= 0:
@@ -259,7 +304,9 @@ class PopupWindow(QMainWindow):
             f"🧪 Deuterio: {fmt(r['deuterium'])} <span style='color:#ff0;'> (+{fmt(pd)}/h)</span> lleno en {td}<br>"
             f"{barra(r['deuterium'], r['cap_deuterium'], '#ff0')}"
         )
-        self.energy_label.setText(f"⚡ Energía: {fmt(r['energy'])}")
+        self.energy_label.setText(
+            f"⚡ Energía: {fmt(r['energy'])}"
+        )
 
     def increment_resources(self):
         r = getattr(self, "current_resources", None)
@@ -278,29 +325,28 @@ class PopupWindow(QMainWindow):
 
         self.update_resource_labels()
 
-    # --- Queues ---
+    # -------------------------------------------------------------
+    # COLAS
+    # -------------------------------------------------------------
     def update_queues(self):
-        print(f"[DEBUG] update_queues called, has_sidebar={getattr(self, 'has_sidebar', None)}")
         if not self.has_sidebar:
-            print("[DEBUG] update_queues: no sidebar, returning")
             return
 
-        # Verificar secciones individualmente.
-        # Distinguimos entre "present" (la sección existe en el DOM) y "active"
-        # (hay construcciones/colas activas). Si las secciones no están presentes
-        # no tocamos las colas cargadas previamente. Si las secciones existen pero
-        # no hay elementos activos -> limpiamos las colas.
         detect_script = """
             (function() {
                 return {
                     building_present: !!document.querySelector('#productionboxbuildingcomponent'),
                     building: !!document.querySelector('#productionboxbuildingcomponent .construction.active'),
+
                     research_present: !!document.querySelector('#productionboxresearchcomponent'),
                     research: !!document.querySelector('#productionboxresearchcomponent .construction.active'),
+
                     lf_building_present: !!document.querySelector('#productionboxlfbuildingcomponent'),
                     lf_building: !!document.querySelector('#productionboxlfbuildingcomponent .construction.active'),
+
                     lf_research_present: !!document.querySelector('#productionboxlfresearchcomponent'),
                     lf_research: !!document.querySelector('#productionboxlfresearchcomponent .construction.active'),
+
                     shipyard_present: !!document.querySelector('#productionboxshipyardcomponent'),
                     shipyard: !!document.querySelector('#productionboxshipyardcomponent .construction.active')
                 };
@@ -308,95 +354,81 @@ class PopupWindow(QMainWindow):
         """
 
         def after_detect(det):
-            print(f"[DEBUG] after_detect called, det={det}")
             if not det:
-                # No pudimos obtener información del DOM -> conservamos colas previas
-                print("[DEBUG] after_detect: det is falsy. Manteniendo colas previas.")
+                # No cambio en el DOM, mantenemos memoria
+                self.update_queue_timers()
                 return
 
-            # ¿Hay alguna sección visible/presente en la página?
             present_flags = (
-                det.get('building_present') or det.get('research_present') or
-                det.get('lf_building_present') or det.get('lf_research_present') or
-                det.get('shipyard_present')
+                det.get('building_present')
+                or det.get('research_present')
+                or det.get('lf_building_present')
+                or det.get('lf_research_present')
+                or det.get('shipyard_present')
             )
 
-            print(f"[DEBUG] present_flags={present_flags}")
             if not present_flags:
-                # No se hallan las secciones en el DOM -> no modificar colas cargadas previamente
-                print("[DEBUG] after_detect: no queue sections present in DOM. Manteniendo colas previas.")
+                # página sin cajas: no tocar memoria
+                self.update_queue_timers()
                 return
 
-            # Si las secciones están presentes pero no hay colas activas, limpiar.
             active_flags = (
-                det.get('building') or det.get('research') or
-                det.get('lf_building') or det.get('lf_research') or
-                det.get('shipyard')
+                det.get('building')
+                or det.get('research')
+                or det.get('lf_building')
+                or det.get('lf_research')
+                or det.get('shipyard')
             )
 
-            print(f"[DEBUG] active_flags={active_flags}")
             if not active_flags:
-                print('[DEBUG] Secciones presentes pero sin colas activas -> limpiar colas')
-                # Pasamos el mapa de presencia para que handle_queue_data sepa
-                # qué componentes están presentes y solo borre colas de esos.
-                present_map = {
-                    'building': bool(det.get('building_present')),
-                    'research': bool(det.get('research_present')),
-                    'lf_building': bool(det.get('lf_building_present')),
-                    'lf_research': bool(det.get('lf_research_present')),
-                    'shipyard': bool(det.get('shipyard_present')),
-                }
-                self.handle_queue_data({'present': present_map, 'queues': []})
+                # no hay colas activas en DOM -> no sobrescribir memoria
+                self.update_queue_timers()
                 return
 
-            # Crear un script dinámicamente SOLO con secciones activas
             parts = []
             if det.get('building'):
-                parts.append('extract_building()')
+                parts.append("extract_building()")
             if det.get('research'):
-                parts.append('extract_research()')
+                parts.append("extract_research()")
             if det.get('lf_building'):
-                parts.append('extract_lf_building()')
+                parts.append("extract_lf_building()")
             if det.get('lf_research'):
-                parts.append('extract_lf_research()')
+                parts.append("extract_lf_research()")
             if det.get('shipyard'):
-                parts.append('extract_shipyard()')
+                parts.append("extract_shipyard()")
 
             if not parts:
-                # Por seguridad (aunque ya comprobamos active_flags), limpiar
-                print("[DEBUG] after_detect: parts empty a pesar de active_flags. Limpiando colas.")
-                self.handle_queue_data([])
+                self.update_queue_timers()
                 return
 
-            print(f"[DEBUG] after_detect: extracting parts={parts}")
-
-            # Construir un objeto `present` para pasar al JS y devolverlo junto con las colas
             present_js = (
-                f"let present = {{building: {str(bool(det.get('building_present'))).lower()}, "
-                f"research: {str(bool(det.get('research_present'))).lower()}, "
-                f"lf_building: {str(bool(det.get('lf_building_present'))).lower()}, "
-                f"lf_research: {str(bool(det.get('lf_research_present'))).lower()}, "
-                f"shipyard: {str(bool(det.get('shipyard_present'))).lower()}}};"
+                f"let present = {{building: {str(det.get('building_present')).lower()}, "
+                f"research: {str(det.get('research_present')).lower()}, "
+                f"lf_building: {str(det.get('lf_building_present')).lower()}, "
+                f"lf_research: {str(det.get('lf_research_present')).lower()}, "
+                f"shipyard: {str(det.get('shipyard_present')).lower()}}};"
             )
 
             dynamic_script = f"""
-            (function() {{
-                {present_js}
-                let final = [];
-                {extract_queue_functions}
-                return {{present: present, queues: final.concat({",".join(parts)})}};
-            }})();
+                (function() {{
+                    {present_js}
+                    let final = [];
+                    {extract_queue_functions}
+                    return {{ present: present, queues: final.concat({",".join(parts)}) }};
+                }})();
             """
 
-            print("[DEBUG] after_detect: running dynamic_script")
             self.web.page().runJavaScript(dynamic_script, self.handle_queue_data)
 
         self.web.page().runJavaScript(detect_script, after_detect)
 
     def handle_queue_data(self, data):
-        print(f"[DEBUG] handle_queue_data called. has_sidebar={getattr(self,'has_sidebar',None)}, data={data}")
+        """
+        Normaliza y procesa las colas extraídas del DOM.
+        Memoria: self.queue_memory keyed by id (sha1).
+        """
+        # Si no tenemos sidebar visible, limpiar y parar timer (legacy)
         if not data or not self.has_sidebar:
-            print("[DEBUG] handle_queue_data: no data or no sidebar -> clearing current_queues and stopping timer")
             self.current_queues = []
             self.queue_text.setText("— No hay construcciones activas —")
             try:
@@ -405,7 +437,7 @@ class PopupWindow(QMainWindow):
                 pass
             return
 
-        # Normalizar entrada: puede ser una lista (legacy) o un dict {'present':..., 'queues':[...]}
+        # Normalizar entrada (legacy support)
         present_map = None
         queues = None
         if isinstance(data, dict) and 'queues' in data:
@@ -414,168 +446,219 @@ class PopupWindow(QMainWindow):
         elif isinstance(data, list):
             queues = data
         else:
-            # Forma inesperada -> tratar como vacío
             queues = []
 
-        if not hasattr(self, "queue_memory"):
-            self.queue_memory = {}
-
-        updated_queues = []
         now = int(time.time())
+        planet_name = getattr(self, "current_planet_name", "—")
+        coords = getattr(self, "current_planet_coords", "—")
 
-        for q in queues:
-            print(f"[DEBUG] Processing queue item: {q}")
-            key = f"{q['label']}|{q['name']}"
-            start = int(q.get("start", now))
-            end = int(q.get("end", now))
+        # Si recibimos datos del DOM -> actualizamos memoria
+        if queues:
+            for q in queues:
+                label = q.get("label", "")
+                name = q.get("name", "")
+                level = q.get("level", "")
+                start = int(q.get("start", now))
+                end = int(q.get("end", now))
 
-            if q["label"] == "🚀 Hangar":
-                if key in self.queue_memory:
-                    start = self.queue_memory[key]["start"]
-                    end = self.queue_memory[key]["end"]
+                # Detectar si es investigación (principal o lifeform)
+                is_research = (
+                    "investig" in label.lower()
+                    or "research" in label.lower()
+                    or "🧬" in label.lower()
+                )
+
+                if is_research:
+                    # Investigación -> almacenar como GLOBAL para evitar ids por planeta
+                    planet_for_store = 'GLOBAL'
+                    coords_for_store = 'GLOBAL'
+                    key_raw = f"{label}|{name}|GLOBAL|{start}|{end}"
                 else:
-                    if end - start < 10:
-                        end = now + 30
-                    self.queue_memory[key] = {"start": start, "end": end}
-            else:
-                self.queue_memory[key] = {"start": start, "end": end}
+                    # Construcciones normales -> sí dependen del planeta
+                    planet_for_store = planet_name
+                    coords_for_store = coords
+                    key_raw = f"{label}|{name}|{planet_name}|{coords}|{start}|{end}"
 
-            updated_queues.append({
-                "label": q["label"],
-                "name": q["name"],
-                "level": q.get("level", ""),
-                "start": start,
-                "end": end
-            })
+                # ID único estable SHA1
+                qid = hashlib.sha1(key_raw.encode("utf-8")).hexdigest()
 
-        # Si recibimos un `present_map`, conservar colas previas de componentes
-        # que ya no están presentes en el DOM (no fueron detectadas ahora).
-        if present_map is not None:
-            for mem_key, mem_val in list(self.queue_memory.items()):
-                # si la memoria ya está en updated_queues la ignoramos
-                if any(mem_key == f"{q['label']}|{q['name']}" for q in updated_queues):
-                    continue
-                label_part = mem_key.split('|', 1)[0]
-                comp = None
-                l = label_part.lower()
-                if 'edificio' in l or '🏗️' in label_part:
-                    comp = 'building'
-                elif 'investig' in l or '🧬' in label_part:
-                    comp = 'research'
-                elif 'hangar' in l or '🚀' in label_part:
-                    comp = 'shipyard'
-                elif 'vida' in l or 'lf' in l or 'forma' in l:
-                    comp = 'lf'
+                # Recuperar memoria previa (si existe)
+                mem = self.queue_memory.get(qid)
+                if mem:
+                    if end - start < 5:
+                        start = mem.get("start", start)
+                        end = mem.get("end", end)
 
-                # si el componente NO está presente ahora (present_map False), lo preservamos
-                if comp is not None and not (
-                    present_map.get(comp) if comp != 'lf' else (
-                        present_map.get('lf_building') or present_map.get('lf_research')
-                    )
-                ):
-                    # reconstruir label/name desde la key y tomar start/end de queue_memory
-                    try:
-                        _, name = mem_key.split('|', 1)
-                    except Exception:
-                        name = mem_key
-                    updated_queues.append({
-                        'label': label_part,
-                        'name': name,
-                        'level': self.queue_memory[mem_key].get('level', ''),
-                        'start': self.queue_memory[mem_key]['start'],
-                        'end': self.queue_memory[mem_key]['end']
-                    })
+                # Guardar en memoria
+                self.queue_memory[qid] = {
+                    "id": qid,
+                    "label": label,
+                    "name": name,
+                    "level": level,
+                    "start": start,
+                    "end": end,
+                    "planet_name": planet_for_store,
+                    "coords": coords_for_store
+                }
 
-        # Eliminar solo las claves de memoria asociadas a componentes que estén presentes
-        def detect_component_from_label(label):
-            l = label.lower()
-            if 'edificio' in l or '🏗️' in label:
-                return 'building'
-            if 'investig' in l or '🧬' in label:
-                return 'research'
-            if 'hangar' in l or '🚀' in label:
-                return 'shipyard'
-            if 'vida' in l or 'lf' in l or 'forma' in l:
-                return 'lf'
-            return None
+        # Reconstruir current_queues desde memoria y ordenar por end
+        updated = list(self.queue_memory.values())
+        updated.sort(key=lambda e: e.get("end", now))
+        self.current_queues = updated
 
-        for k in list(self.queue_memory.keys()):
-            # si la entrada no aparece en las colas actualizadas, decidir si eliminarla
-            if all(k != f"{q['label']}|{q['name']}" for q in updated_queues):
-                label = k.split('|', 1)[0]
-                comp = detect_component_from_label(label)
-                remove = False
-                if present_map is None:
-                    # comportamiento legacy: eliminar
-                    remove = True
-                else:
-                    if comp == 'building':
-                        remove = bool(present_map.get('building'))
-                    elif comp == 'research':
-                        remove = bool(present_map.get('research'))
-                    elif comp == 'shipyard':
-                        remove = bool(present_map.get('shipyard'))
-                    elif comp == 'lf':
-                        remove = bool(present_map.get('lf_building') or present_map.get('lf_research'))
-                    else:
-                        # no reconocemos el tipo -> conservamos la entrada para evitar pérdidas
-                        remove = False
+        # Asegurar timer corriendo si hay colas
+        if self.current_queues:
+            try:
+                self.timer_fast.start()
+            except Exception:
+                pass
+        else:
+            try:
+                self.timer_fast.stop()
+            except Exception:
+                pass
 
-                if remove:
-                    print(f"[DEBUG] Removing stale queue_memory key: {k} (component={comp})")
-                    del self.queue_memory[k]
-
-        self.current_queues = updated_queues
-        print(f"[DEBUG] Updated current_queues ({len(updated_queues)}): {self.current_queues}")
-        try:
-            self.timer_fast.start()
-        except Exception:
-            pass
+        # Actualizar UI inmediatamente
         self.update_queue_timers()
 
+        # Enviar recursos + colas actualizados al MainWindow (si existe)
+        if self.main_window and hasattr(self, "current_resources"):
+            # Pasar una copia ordenada de las colas
+            queues_list = list(self.queue_memory.values())
+            queues_list.sort(key=lambda q: q.get("end", time.time()))
+            self.main_window.update_planet_data(
+                planet_name=planet_name,
+                coords=coords,
+                resources=getattr(self, "current_resources", {}),
+                queues=queues_list
+            )
+
+    # -------------------------------------------------------------
+    # TIMER DE COLAS
+    # -------------------------------------------------------------
     def update_queue_timers(self):
-        if not hasattr(self, "current_queues") or not self.current_queues:
-            return
+        """
+        Muestra las colas en el sidebar usando memoria (queue_memory).
+        """
+        # Reconstruir desde memoria si current_queues vacío
+        queues = getattr(self, "current_queues", None)
+        if not queues or len(queues) == 0:
+            if self.queue_memory:
+                now = int(time.time())
+                queues = list(self.queue_memory.values())
+                queues.sort(key=lambda e: e.get("end", now))
+            else:
+                try:
+                    self.queue_text.setHtml("— No hay construcciones activas —")
+                except Exception:
+                    self.queue_text.setPlainText("— No hay construcciones activas —")
+                try:
+                    self.timer_fast.stop()
+                except Exception:
+                    pass
+                return
 
-        now = int(time.time())
+        now = time.time()
         lines = []
+        planet_now = getattr(self, "current_planet_name", "—")
+
+        if not hasattr(self, "finished_queue_ids"):
+            self.finished_queue_ids = {}  # dict: qid -> finish_time
+
         finished_any = False
+        queues_to_remove = []
+        
+        TIMER_QUEUE_REMOVAL = 5.0
 
-        if not hasattr(self, "finished_queue_names"):
-            self.finished_queue_names = set()
-
-        for entry in self.current_queues:
-            label = entry["label"]
-            name = entry["name"]
-            level = entry["level"]
-            start = entry["start"]
-            end = entry["end"]
+        for entry in queues:
+            label = entry.get("label", "")
+            name = entry.get("name", "")
+            level = entry.get("level", "")
+            start = int(entry.get("start", now))
+            end = int(entry.get("end", now))
+            planet_name = entry.get("planet_name", "—")
+            coords = entry.get("coords", "—")
+            qid = entry.get("id")
 
             remaining = max(0, end - now)
-            minutes, seconds = divmod(remaining, 60)
-            remaining_str = f"{minutes}m {seconds:02d}s" if remaining > 0 else "Completado"
+            m, s = divmod(int(remaining), 60)
+            remaining_str = f"{m}m {s:02d}s" if remaining > 0 else "Completado"
 
             progress = 0
             if end > start:
-                progress = max(0, min(100, int(((now - start) / (end - start)) * 100)))
+                progress = min(100, max(0, int(((now - start) / (end - start)) * 100)))
+
+            # Si la cola está al 100% (remaining <= 0), marcarla para eliminar después del timer
+            if remaining <= 0 and qid:
+                if qid not in self.finished_queue_ids:
+                    # Primera vez que se completa: registrar timestamp
+                    self.finished_queue_ids[qid] = now
+                    finished_any = True
+                
+                # Verificar si ha pasado el tiempo de espera
+                time_since_finish = now - self.finished_queue_ids[qid]
+                if time_since_finish >= TIMER_QUEUE_REMOVAL:
+                    queues_to_remove.append(qid)
+                else:
+                    # Aún dentro del timer: mostrar como completada
+                    color = "#0f0"
+                    filled = 26
+                    bar = f"<span style='color:{color};'>{'█'*filled}</span>"
+                    is_research = (
+                        "investig" in label.lower()
+                        or "research" in label.lower()
+                        or "🧬" in label.lower()
+                    )
+                    if is_research:
+                        header = f"[GLOBAL] {label}: {name} {level}"
+                    else:
+                        header = f"[{planet_name} ({coords})] {label}: {name} {level}"
+                    lines.append(f"✅ {header} ({remaining_str}) [{bar}]")
+                
+                continue  # No mostrar en la lista normal
 
             color = "#0f0" if progress < 60 else "#ff0" if progress < 90 else "#f00"
             filled = int(26 * progress / 100)
             bar = f"<span style='color:{color};'>{'█'*filled}</span><span style='color:#555;'>{'░'*(26-filled)}</span>"
 
-            lines.append(f"{label}: {name} {level} ({remaining_str})<br>[{bar}] {progress}%")
+            is_research = (
+                "investig" in label.lower()
+                or "research" in label.lower()
+                or "🧬" in label.lower()
+            )
+            if is_research:
+                header = f"[GLOBAL] {label}: {name} {level}"
+            else:
+                header = f"[{planet_name} ({coords})] {label}: {name} {level}"
+            lines.append(f"{header} ({remaining_str})<br>[{bar}] {progress}%")
 
-            if remaining <= 0 and name not in self.finished_queue_names:
-                self.finished_queue_names.add(name)
-                finished_any = True
+        # Render
+        try:
+            self.queue_text.setHtml("<br><br>".join(lines))
+        except Exception:
+            try:
+                self.queue_text.setPlainText("\n\n".join(lines))
+            except Exception:
+                pass
 
-        self.queue_text.setHtml("<br><br>".join(lines))
+        # Eliminar queues completadas del memory (después del timer)
+        for qid in queues_to_remove:
+            if qid in self.queue_memory:
+                del self.queue_memory[qid]
+            if qid in self.finished_queue_ids:
+                del self.finished_queue_ids[qid]
 
         if finished_any:
-            self.update_resources()
-            self.update_queues()
+            # refrescar recursos y colas (esto actualizará memoria y panel)
+            try:
+                self.update_resources()
+                self.update_queues()
+            except Exception:
+                pass
 
-    # --- Utilities ---
+    # -------------------------------------------------------------
+    # GUARDAR HTML
+    # -------------------------------------------------------------
     def save_html(self):
         def handle_html(html):
             path, _ = QFileDialog.getSaveFileName(self, "Guardar HTML", "pagina.html", "Archivos HTML (*.html)")
@@ -584,15 +667,13 @@ class PopupWindow(QMainWindow):
                     f.write(html)
         self.web.page().toHtml(handle_html)
 
+    # -------------------------------------------------------------
+    # Cierre
+    # -------------------------------------------------------------
     def closeEvent(self, event):
-        if self.main_window and self in getattr(self.main_window, 'popups', []):
+        if self.main_window and self in getattr(self.main_window, "popups", []):
             try:
                 self.main_window.popups.remove(self)
-            except Exception:
-                pass
-        for popup in getattr(self, "popups", []):
-            try:
-                popup.close()
-            except Exception:
+            except:
                 pass
         super().closeEvent(event)

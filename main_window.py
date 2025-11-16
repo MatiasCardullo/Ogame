@@ -11,23 +11,22 @@ import os
 
 
 class MainWindow(QMainWindow):
-    """Ventana principal: contiene tabs (navegador, panel principal, subasta).
-    No contiene toolbar ni sidebar; esos se muestran en popups.
-    """
+    """Ventana principal de OGame."""
+
     def __init__(self, profile=None, url=None):
         super().__init__()
         self.setWindowTitle("OGame — Main")
         self.resize(1450, 900)
 
+        # Profile
         profile = profile or QWebEngineProfile("ogame_profile", self)
         profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
         os.makedirs("profile_data", exist_ok=True)
         profile.setPersistentStoragePath(os.path.abspath("profile_data"))
         profile.setCachePath(os.path.abspath("profile_data/cache"))
-
         self.profile = profile
 
-        # Web view inside a tab (no toolbar/sidebar here)
+        # Web view
         self.web = QWebEngineView()
         self.page = CustomWebPage(profile, self.web, main_window=self)
         self.web.setPage(self.page)
@@ -37,14 +36,14 @@ class MainWindow(QMainWindow):
         # Tabs
         self.tabs = QTabWidget()
 
-        # Browser tab
+        # ----- Tab navegador -----
         self.browser_tab = QWidget()
         browser_layout = QVBoxLayout()
         browser_layout.addWidget(self.web)
         self.browser_tab.setLayout(browser_layout)
         self.tabs.addTab(self.browser_tab, "🌐 Navegador")
 
-        # Main panel tab
+        # ----- Panel principal -----
         main_layout = QVBoxLayout()
         self.main_panel = QWidget()
         self.main_panel.setStyleSheet("""
@@ -52,17 +51,17 @@ class MainWindow(QMainWindow):
             color: #EEE;
         """)
         self.main_panel.setLayout(main_layout)
-        
-        # Notification label (will be shown at the top of main panel)
+
+        # Notificaciones
         self._notif_label = QLabel("")
         self._notif_label.setStyleSheet("color: #0f0; font-weight: bold; padding: 8px;")
         main_layout.addWidget(self._notif_label)
-        
+
         self.main_label = QLabel("🪐 Panel Principal de Planetas (en desarrollo)")
         main_layout.addWidget(self.main_label)
         self.tabs.addTab(self.main_panel, "📊 Panel Principal")
 
-        # Auction tab (moved from sidebar)
+        # ----- Subasta -----
         self.auction_tab = QWidget()
         auction_layout = QVBoxLayout()
         self.auction_text = QTextEdit()
@@ -77,36 +76,36 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self.tabs)
 
-        # Tray icon for notifications
+        # Tray icon
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(QIcon.fromTheme("applications-games"))
         self.tray_icon.setVisible(True)
 
-        # planet data storage
+        # DATA
+        # planets_data keyed by planet_name -> dict(coords, resources, queues(list), last_update)
         self.planets_data = {}
+        # global queues (research, etc.) keyed by queue id
+        self.global_queues = {}
+
+        # Timers
         self.timer_global = QTimer(self)
         self.timer_global.setInterval(1000)
         self.timer_global.timeout.connect(self.increment_all_planets)
         self.timer_global.start()
 
-        # Queue watcher: central notification for queues received from popups
         self.queue_timer = QTimer(self)
         self.queue_timer.setInterval(1000)
         self.queue_timer.timeout.connect(self.check_queues)
         self.queue_timer.start()
 
-        # set to keep track of already-notified queue entries to avoid duplicates
         self.notified_queues = set()
-
-        # Auction periodic refresh
-        self.auction_timer = None
-
-        # Keep track of popups
         self.popups = []
 
-    # --- Panels and planets ---
+    # ====================================================================
+    #  PANEL PRINCIPAL
+    # ====================================================================
+
     def refresh_main_panel(self):
-        # Build HTML table: planets as columns, resources/queues as rows
         html = """
         <style>
             body { background-color: #000; color: #EEE; font-family: Consolas; }
@@ -119,282 +118,395 @@ class MainWindow(QMainWindow):
         <h2>🌌 Panel Principal — Recursos y Colas</h2>
         """
 
-        if not getattr(self, "planets_data", {}):
+        if not self.planets_data:
             html += "<p>No hay datos de planetas aún.</p>"
-        else:
-            # Helper functions
-            def barra(cant, cap, color):
-                try:
-                    if cap <= 0:
-                        return ""
-                    ratio = min(1, cant / cap)
-                    filled = int(15 * ratio)
-                    empty = 15 - filled
-                    block = '█' * filled
-                    empty_block = '░' * empty
-                    return f"<span style='color:{color};'>{block}</span><span style='color:#444;'>{empty_block}</span>"
-                except Exception:
+            self.main_label.setText(html)
+            return
+
+        # Helpers
+        def barra(cant, cap, color):
+            try:
+                if cap <= 0:
                     return ""
+                ratio = min(1, cant / cap)
+                filled = int(15 * ratio)
+                empty = 15 - filled
+                return f"<span style='color:{color};'>{'█'*filled}</span>" \
+                       f"<span style='color:#444;'>{'░'*empty}</span>"
+            except:
+                return ""
 
-            def fmt(x):
-                try:
-                    return f"{int(x):,}".replace(",", ".")
-                except Exception:
-                    return str(x)
+        def fmt(x):
+            try:
+                return f"{int(x):,}".replace(",", ".")
+            except:
+                return str(x)
 
-            def tiempo_lleno(cant, cap, prod):
-                try:
-                    if prod <= 0 or cant >= cap:
-                        return "—"
-                    horas = (cap - cant) / (prod * 3600)
-                    if horas < 1:
-                        minutos = horas * 60
-                        return f"{minutos:.1f}m"
-                    else:
-                        return f"{horas:.1f}h"
-                except Exception:
+        def tiempo_lleno(cant, cap, prod):
+            try:
+                if prod <= 0 or cant >= cap:
                     return "—"
+                horas = (cap - cant) / (prod * 3600)
+                if horas < 1:
+                    return f"{horas*60:.1f}m"
+                return f"{horas:.1f}h"
+            except:
+                return "—"
 
-            def format_queue_entry(entry, now):
-                """Format a queue entry with progress bar."""
-                label = entry.get('label', '')
-                name = entry.get('name', '')
-                start = entry.get('start', now)
-                end = entry.get('end', now)
-                remaining = max(0, end - now)
-                d, r = divmod(remaining, 86400) #días
-                h, r = divmod(r, 3600)         # horas
-                m, s = divmod(r, 60)          # minutos
-                if d > 0:
-                    parts = []
-                    parts.append(f"{d}d")
-                    if h > 0:
-                        parts.append(f"{h}h")
-                    if m > 0:
-                        parts.append(f"{m}m")
-                    time_text = " ".join(parts)
-                else:
-                    time_text = f"{h}:{m:02d}:{s:02d}"
-                progress = 0
-                if end > start:
-                    progress = min(100, max(0, int(((now - start) / (end - start)) * 100)))
-                color = "#0f0" if progress < 60 else "#ff0" if progress < 90 else "#f00"
-                filled = int(12 * progress / 100)
-                block = '█' * filled
-                empty_block = '░' * (12 - filled)
-                bar = f"<span style='color:{color};'>{block}</span><span style='color:#555;'>{empty_block}</span>"
-                return f"{label} {name} ({time_text}) [{bar}] {progress}%"
+        def format_queue_entry(entry, now):
+            """Formato amigable para mostrar una queue en la tabla principal."""
+            label = entry.get('label', '')
+            name = entry.get('name', '')
+            start = int(entry.get('start', now))
+            end = int(entry.get('end', now))
+            planet_name = entry.get('planet_name', '—')
+            coords = entry.get('coords', '—')
 
-            planets_list = list(self.planets_data.keys())
-            now = int(time.time())
+            remaining = max(0, end - now)
+            d, r = divmod(remaining, 86400)
+            h, r = divmod(r, 3600)
+            m, s = divmod(r, 60)
 
-            # Collect research queues globally (they're shared across planets, show once)
-            all_research_queues = {}
-            for planet, data in self.planets_data.items():
-                q = data.get("queues", [])
-                for entry in q:
-                    if "Investigación" in entry.get("label", ""):
-                        key = f"{entry.get('label')}|{entry.get('name')}"
-                        if key not in all_research_queues:
-                            all_research_queues[key] = entry
+            if d > 0:
+                parts = [f"{d}d"]
+                if h > 0: parts.append(f"{h}h")
+                if m > 0: parts.append(f"{m}m")
+                time_text = " ".join(parts)
+            else:
+                time_text = f"{h}:{m:02d}:{s:02d}"
 
-            # Show research queues separate from table
-            if all_research_queues:
-                html += "<div class='research-section'><b>🧬 Investigaciones:</b><br>"
-                for key, entry in all_research_queues.items():
-                    html += format_queue_entry(entry, now) + "<br>"
-                html += "</div>"
+            progress = 0
+            if end > start:
+                progress = min(100, max(0, int(((now - start) / (end - start)) * 100)))
 
-            # Start table with resources and per-planet queues
-            html += "<table><tr><th>Recurso</th>"
-            for planet in planets_list:
-                html += f"<th>{planet}</th>"
+            color = "#0f0" if progress < 60 else "#ff0" if progress < 90 else "#f00"
+            filled = int(12 * progress / 100)
+            bar = f"<span style='color:{color};'>{'█'*filled}</span>" \
+                  f"<span style='color:#555;'>{'░'*(12-filled)}</span>"
+            return f"{name} ({time_text}) [{bar}] {progress}%"
+
+        planet_names = list(self.planets_data.keys())
+        now = int(time.time())
+
+        # ----- Investigaciones (global, deduplicadas por label+name)
+        unique_research = {}
+        #print(f"[DEBUG] Planetas en datos: {list(self.planets_data.keys())}")
+        for pname, pdata in self.planets_data.items():
+            queues = pdata.get("queues", [])
+            #print(f"[DEBUG] {pname}: {len(queues)} colas")
+            for q in queues:
+                label = (q.get("label", "") or "")
+                name = (q.get("name", "") or "")
+                #print(f"[DEBUG]   Queue label: '{label}' (type: {type(label).__name__})")
+                is_research = (
+                    "Investigación" in label or "🧬" in label or
+                    "investig" in label.lower() or "research" in label.lower()
+                )
+                if is_research:
+                    key = f"{label}|{name}".strip().lower()
+                    if key not in unique_research:
+                        qid = q.get("id")
+                        #print(f"[DEBUG] ✓ Encontré investigación! ID: {qid}, label: {label}")
+                        unique_research[key] = q
+
+        # Incluir investigaciones globales (desde popups) también
+        for q in getattr(self, 'global_queues', {}).values():
+            label = (q.get("label", "") or "")
+            name = (q.get("name", "") or "")
+            key = f"{label}|{name}".strip().lower()
+            if key not in unique_research:
+                #print(f"[DEBUG] (global) Añadiendo investigación: {label} / {name}")
+                unique_research[key] = q
+
+        #print(f"[DEBUG] Total investigaciones encontradas: {len(unique_research)}")
+        if unique_research:
+            html += "<div class='research-section'><b>🧬 Investigaciones:</b><br>"
+            for entry in unique_research.values():
+                # Filtrar investigaciones completadas
+                end = int(entry.get("end", now))
+                if end <= now:
+                    continue
+                html += format_queue_entry(entry, now) + "<br>"
+            html += "</div>"
+
+        # ----- Tabla recursos + colas por planeta
+        html += "<table><tr><th>Recurso</th>"
+        for p in planet_names:
+            coords = self.planets_data[p].get("coords", "—")
+            html += f"<th>{p}<br><small>{coords}</small></th>"
+        html += "</tr>"
+
+        resource_names = ["Metal", "Cristal", "Deuterio", "Energía"]
+        resource_specs = [
+            ("metal", "cap_metal", "prod_metal", "#0f0"),
+            ("crystal", "cap_crystal", "prod_crystal", "#0af"),
+            ("deuterium", "cap_deuterium", "prod_deuterium", "#ff0"),
+            ("energy", None, None, "#f0f")
+        ]
+
+        for rname, spec in zip(resource_names, resource_specs):
+            rkey, capkey, prodkey, color = spec
+            html += f"<tr><td><b>{rname}</b></td>"
+
+            for planet_name in planet_names:
+                pdata = self.planets_data[planet_name]
+                r = pdata["resources"]
+
+                if rkey == "energy":
+                    html += f"<td>⚡ {fmt(r.get('energy', 0))}</td>"
+                    continue
+
+                cant = r.get(rkey, 0)
+                cap = r.get(capkey, 1)
+                prod = r.get(prodkey, 0)
+                prod_h = prod * 3600
+                ttf = tiempo_lleno(cant, cap, prod)
+                bar_html = barra(cant, cap, color)
+
+                html += f"<td>{fmt(cant)} (+{fmt(prod_h)}/h) lleno en {ttf}<br>{bar_html}</td>"
+
             html += "</tr>"
 
-            # Resource rows
-            resource_names = ["Metal", "Cristal", "Deuterio", "Energía"]
-            resource_keys = [("metal", "cap_metal", "prod_metal", "#0f0"),
-                           ("crystal", "cap_crystal", "prod_crystal", "#0af"),
-                           ("deuterium", "cap_deuterium", "prod_deuterium", "#ff0"),
-                           ("energy", None, None, "#f0f")]
+        # ----- Colas (no investigación) — agrupar por tipo y mostrar por planeta
+        queue_types = {
+            "🏗️ Construcciones": [],
+            "🚀 Hangar": [],
+            "🌿 Forma de Vida": []
+        }
 
-            for name, res_keys in zip(resource_names, resource_keys):
-                html += f"<tr><td><b>{name}</b></td>"
-                for planet in planets_list:
-                    data = self.planets_data.get(planet, {})
-                    r = data.get("resources", {})
-                    if res_keys[0] == "energy":
-                        html += f"<td>⚡ {fmt(r.get('energy', 0))}</td>"
-                    else:
-                        res_key, cap_key, prod_key, color = res_keys
-                        cant = r.get(res_key, 0)
-                        cap = r.get(cap_key, 1)
-                        prod = r.get(prod_key, 0)
-                        prod_h = prod * 3600
-                        ttf = tiempo_lleno(cant, cap, prod)
-                        bar_html = barra(cant, cap, color)
-                        html += f"<td>{fmt(cant)} (+{fmt(prod_h)}/h) lleno en {ttf}<br>{bar_html}</td>"
-                html += "</tr>"
+        for planet_name in planet_names:
+            for q in self.planets_data[planet_name].get("queues", []):
+                label = q.get("label", "")
+                end = int(q.get("end", now))
+                # Filtrar colas completadas (end <= now)
+                if end <= now:
+                    continue
+                if "Investigación" in label or "🧬" in label:
+                    continue
+                elif "Forma de Vida" in label or "lf" in label.lower():
+                    queue_types["🌿 Forma de Vida"].append((planet_name, q))
+                elif "Hangar" in label or "🚀" in label:
+                    queue_types["🚀 Hangar"].append((planet_name, q))
+                else:
+                    queue_types["🏗️ Construcciones"].append((planet_name, q))
 
-            # Collect queue types once
-            queue_types = {"🏗️ Construcciones": [], "🚀 Hangar": [], "🌿 Forma de Vida": []}
-            for planet in planets_list:
-                data = self.planets_data.get(planet, {})
-                q = data.get("queues", [])
-                for entry in q:
-                    label = entry.get("label", "")
-                    if "Investigación" in label:
-                        continue  # Skip research (already shown above)
-                    elif "Forma de Vida" in label:
-                        queue_types["🌿 Forma de Vida"].append((planet, entry))
-                    elif "Hangar" in label:
-                        queue_types["🚀 Hangar"].append((planet, entry))
-                    elif "Edificio" in label:
-                        queue_types["🏗️ Construcciones"].append((planet, entry))
+        for qtype, entries in queue_types.items():
+            if not entries:
+                continue
 
-            # Add queue rows
-            for queue_type, entries in queue_types.items():
-                if entries:
-                    html += f"<tr><td><b>{queue_type}</b></td>"
-                    for planet in planets_list:
-                        planet_queues = [e for p, e in entries if p == planet]
-                        if planet_queues:
-                            html += "<td>"
-                            for entry in planet_queues:
-                                html += format_queue_entry(entry, now) + "<br>"
-                            html += "</td>"
-                        else:
-                            html += "<td>—</td>"
-                    html += "</tr>"
+            html += f"<tr><td><b>{qtype}</b></td>"
 
-            html += "</table>"
+            for planet_name in planet_names:
+                planet_entries = [e for p, e in entries if p == planet_name]
+                if not planet_entries:
+                    html += "<td>—</td>"
+                    continue
+
+                html += "<td>"
+                for e in planet_entries:
+                    html += format_queue_entry(e, now) + "<br>"
+                html += "</td>"
+
+            html += "</tr>"
+
+        html += "</table>"
 
         self.main_label.setTextFormat(Qt.TextFormat.RichText)
         self.main_label.setText(html)
 
+    # ====================================================================
+    #  UPDATE PLANET DATA (API nueva con queues que incluyen id)
+    # ====================================================================
+    def update_planet_data(self, planet_name, coords, resources, queues):
+        """
+        Recibe:
+          - planet_name (str)
+          - coords (str)
+          - resources (dict)
+          - queues (list of queue dicts, cada uno con 'id','label','name','start','end','planet_name','coords',...)
+        """
+        # Normalizar recursos: asegurar last_update timestamp
+        resources = resources or {}
+        if "last_update" not in resources:
+            resources["last_update"] = time.time()
+
+        # Asegurarse que planet_name exista
+        pdata = self.planets_data.get(planet_name, {})
+        pdata["coords"] = coords
+        pdata["resources"] = resources
+
+        # Filtrar las queues recibidas: las queues con planet_name GLOBAL se guardan
+        # en self.global_queues; las demás se asignan al planeta correspondiente.
+        qlist = []
+        for q in queues or []:
+            qid = q.get("id")
+            if not qid:
+                continue
+            q_planet = q.get("planet_name", planet_name)
+            q_coords = q.get("coords", coords)
+
+            entry = {
+                "id": qid,
+                "label": q.get("label", ""),
+                "name": q.get("name", ""),
+                "level": q.get("level", ""),
+                "start": int(q.get("start", time.time())),
+                "end": int(q.get("end", time.time())),
+                "planet_name": q_planet,
+                "coords": q_coords
+            }
+
+            # Si es global (research), almacenarla en global_queues
+            if q_planet is None or str(q_planet).upper() == "GLOBAL":
+                self.global_queues[qid] = entry
+                # don't include in planet-specific list
+                continue
+
+            # Si la cola pertenece a este planeta, añadirla
+            if q_planet == planet_name:
+                qlist.append(entry)
+
+        pdata["queues"] = qlist
+        pdata["last_update"] = time.time()
+        self.planets_data[planet_name] = pdata
+
+        # Refrescar UI
+        self.refresh_main_panel()
+
+    # ====================================================================
+    #  Incremento pasivo
+    # ====================================================================
     def increment_all_planets(self):
-        if not getattr(self, "planets_data", None):
+        if not self.planets_data:
             return
         now = time.time()
-        for p, data in self.planets_data.items():
-            r = data["resources"]
+
+        for p, pdata in self.planets_data.items():
+            r = pdata["resources"]
             elapsed = now - r.get("last_update", now)
             if elapsed <= 0:
                 continue
+
             r["last_update"] = now
-            r["metal"] += r["prod_metal"] * elapsed
-            r["crystal"] += r["prod_crystal"] * elapsed
-            r["deuterium"] += r["prod_deuterium"] * elapsed
+            r["metal"] += r.get("prod_metal", 0) * elapsed
+            r["crystal"] += r.get("prod_crystal", 0) * elapsed
+            r["deuterium"] += r.get("prod_deuterium", 0) * elapsed
+
         self.refresh_main_panel()
 
-    def update_planet_data(self, planet, resources, queues):
-        self.planets_data[planet] = {
-            "resources": resources,
-            "queues": queues,
-            "last_update": time.strftime("%H:%M:%S")
-        }
-        self.refresh_main_panel()
-
+    # ====================================================================
+    #  CHECK QUEUES GLOBALES (notificaciones)
+    # ====================================================================
     def check_queues(self):
-        """Scan stored planets' queues and notify when any queue finishes.
-
-        This runs centrally in the main window so notifications still happen
-        even if the popup that reported the queue is closed.
-        """
         now = int(time.time())
-        active_keys = set()
+        active_ids = set()
 
-        for planet, data in list(self.planets_data.items()):
-            queues = data.get("queues") or []
-            for entry in queues:
-                label = entry.get("label")
-                name = entry.get("name")
-                start = int(entry.get("start", now))
-                end = int(entry.get("end", now))
-                key = f"{planet}|{label}|{name}|{start}|{end}"
-                active_keys.add(key)
-
-                if end <= now and key not in self.notified_queues:
-                    # Queue finished -> notify and mark as notified
+        for pname, pdata in self.planets_data.items():
+            for q in pdata.get("queues", []):
+                qid = q.get("id")
+                if not qid:
+                    continue
+                active_ids.add(qid)
+                end = int(q.get("end", now))
+                if end <= now and qid not in self.notified_queues:
                     try:
-                        self.show_notification("✅ Cola completada", f"{planet}: {label}: {name}")
+                        self.show_notification(
+                            "✅ Cola completada",
+                            f"{pname}: {q.get('label','')} {q.get('name','')}"
+                        )
                     except Exception as e:
-                        print("[DEBUG] Error al enviar notificación desde MainWindow:", e)
-                    self.notified_queues.add(key)
+                        print("[DEBUG] Error al enviar notificación:", e)
+                    self.notified_queues.add(qid)
 
-        # Prune notified_queues to keep memory bounded: remove keys no longer active
-        to_remove = [k for k in self.notified_queues if k not in active_keys]
-        for k in to_remove:
+        # Also consider global queues (researches)
+        for q in getattr(self, 'global_queues', {}).values():
+            qid = q.get("id")
+            if not qid:
+                continue
+            active_ids.add(qid)
+            end = int(q.get("end", now))
+            if end <= now and qid not in self.notified_queues:
+                try:
+                    self.show_notification(
+                        "✅ Cola completada",
+                        f"{q.get('label','')} {q.get('name','')}"
+                    )
+                except Exception as e:
+                    print("[DEBUG] Error al enviar notificación:", e)
+                self.notified_queues.add(qid)
+
+        # Prune notified set
+        to_remove = [qid for qid in list(self.notified_queues) if qid not in active_ids]
+        for qid in to_remove:
             try:
-                self.notified_queues.remove(k)
+                self.notified_queues.remove(qid)
             except KeyError:
                 pass
 
-    # --- Auction moved here ---
+    # ====================================================================
+    #  SUBASTA
+    # ====================================================================
     def update_auction(self):
-        # Create a hidden web view to fetch auction info using the shared profile
-        profile = self.profile
         hidden_web = QWebEngineView()
-        hidden_page = CustomWebPage(profile, hidden_web, main_window=self)
+        hidden_page = CustomWebPage(self.profile, hidden_web, main_window=self)
         hidden_web.setPage(hidden_page)
 
         def after_load():
-            QTimer.singleShot(1500, lambda: hidden_web.page().runJavaScript(extract_auction_script, self.handle_auction_data))
+            QTimer.singleShot(1500, lambda:
+                hidden_web.page().runJavaScript(
+                    extract_auction_script,
+                    self.handle_auction_data
+                )
+            )
 
         hidden_web.loadFinished.connect(after_load)
 
         current_url = self.web.url().toString()
         base_url = current_url.split("?")[0]
         auction_url = base_url + "?page=ingame&component=traderAuctioneer"
+
         hidden_web.load(QUrl(auction_url))
 
     def handle_auction_data(self, data):
         if not data:
             return
-        self.last_auction_data = data
+
         status = data.get('status', '—')
         item = data.get('item', '—')
         bid = data.get('currentBid', '—')
         bidder = data.get('highestBidder', '—')
         time_left = data.get('timeLeft', '—')
 
-        if isinstance(time_left, (int, float)) or str(time_left).isdigit():
+        if str(time_left).isdigit():
             try:
-                seconds = int(float(time_left))
+                seconds = int(time_left)
                 td = str(timedelta(seconds=seconds))
-                h, m, s = td.split(":" )
+                h, m, s = td.split(":")
                 time_left = f"{int(h)}h {int(m)}m"
-            except Exception:
+            except:
                 pass
 
-        texto = f"{status}\nTiempo restante: {time_left}\nItem: {item}\nOferta: {bid}\nMejor postor: {bidder}"
+        texto = (
+            f"{status}\n"
+            f"Tiempo restante: {time_left}\n"
+            f"Item: {item}\n"
+            f"Oferta: {bid}\n"
+            f"Mejor postor: {bidder}"
+        )
+
         self.auction_text.setPlainText(texto)
 
+    # ====================================================================
+    #  NOTIFICACIONES
+    # ====================================================================
     def show_notification(self, title, message):
-        """Muestra notificación centralizada en la ventana principal.
-        
-        Notifica a través de:
-        1. System tray (si disponible)
-        2. Panel principal (etiqueta verde en la parte superior)
-        
-        Args:
-            title: Título de la notificación
-            message: Contenido del mensaje
-        """
         print(f"[NOTIFY] {title}: {message}")
 
-        # Mostrar en bandeja del sistema
         if hasattr(self, "tray_icon") and self.tray_icon.isSystemTrayAvailable():
             self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 5000)
 
-        # Mostrar en etiqueta del panel principal
         try:
-            if not hasattr(self, "_notif_label"):
-                self._notif_label = QLabel()
-                self._notif_label.setStyleSheet("color: #0f0; font-weight: bold;")
             self._notif_label.setText(f"🔔 {title}: {message}")
-            # Auto-limpiar después de 8 segundos
             QTimer.singleShot(8000, lambda: self._notif_label.setText(""))
         except Exception as e:
-            print("[DEBUG] Error al mostrar notificación en panel:", e)
-
+            print("[DEBUG] Error al mostrar notificación:", e)
