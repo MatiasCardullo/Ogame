@@ -30,8 +30,8 @@ class MainWindow(QMainWindow):
         self.web = QWebEngineView()
         self.page = CustomWebPage(profile, self.web, main_window=self)
         self.web.setPage(self.page)
-        if url:
-            self.web.load(QUrl(url))
+        self.web.load(QUrl(url))
+        self.web.loadFinished.connect(self.open_popup)
 
         # Tabs
         self.tabs = QTabWidget()
@@ -100,6 +100,46 @@ class MainWindow(QMainWindow):
 
         self.notified_queues = set()
         self.popups = []
+
+    def open_popup(self):
+        js = """
+        (async function() {
+            try {
+                function sleep(ms) {
+                    return new Promise(resolve => setTimeout(resolve, ms));
+                }
+                let targetBtn = null;
+                let intentos = 0;
+                while (!targetBtn && intentos < 50) { // 50 intentos = 50 * 200ms = 10s
+                    const buttons = document.querySelectorAll('button.button.button-default.button-md');
+                    for (const btn of buttons) {
+                        if (btn.textContent.includes("Jugado por última vez")) {
+                            targetBtn = btn;
+                            break;
+                        }
+                    }
+                    if (!targetBtn) {
+                        console.log('[AUTOCLICK] Esperando botón... intento ', intentos);
+                        await sleep(200);
+                        intentos++;
+                    }
+                }
+                if (!targetBtn) {
+                    console.log('[AUTOCLICK] No se encontró el botón después de esperar.');
+                    return false;
+                }
+                console.log('[AUTOCLICK] Click en:', targetBtn.textContent.trim());
+                targetBtn.click();
+                return true;
+            } catch(e) {
+                console.log('[AUTOCLICK ERROR]', e);
+                return false;
+            }
+        })();
+        """
+        def done(result):
+            self.tabs.setCurrentWidget(self.main_panel)
+        QTimer.singleShot(3000, lambda: self.web.page().runJavaScript(js, done))
 
     # ====================================================================
     #  PANEL PRINCIPAL
