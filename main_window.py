@@ -9,6 +9,7 @@ from datetime import timedelta
 import time
 import os
 
+os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
 
 class MainWindow(QMainWindow):
     """Ventana principal de OGame."""
@@ -138,8 +139,181 @@ class MainWindow(QMainWindow):
         })();
         """
         def done(result):
+            print("[DEBUG] Primer planeta cargado, iniciando carga de otros planetas...")
             self.tabs.setCurrentWidget(self.main_panel)
+            QTimer.singleShot(1000, self.load_other_planets)
         QTimer.singleShot(3000, lambda: self.web.page().runJavaScript(js, done))
+
+    # ====================================================================
+    #  CARGAR OTROS PLANETAS
+    # ====================================================================
+    def load_other_planets(self):
+        """Busca los enlaces de otros planetas en el sidebar y los carga secuencialmente."""
+        script = """
+        (function() {
+            console.log("[DEBUG JS] Buscando planetList...");
+            
+            // Intentar encontrar planetList en el documento
+            let planetList = document.getElementById('planetList');
+            console.log("[DEBUG JS] planetList encontrado:", !!planetList);
+            
+            if (!planetList) {
+                console.log("[DEBUG JS] Intentando buscar en iframe...");
+                const iframes = document.querySelectorAll('iframe');
+                console.log("[DEBUG JS] Iframes encontrados:", iframes.length);
+                for (let iframe of iframes) {
+                    try {
+                        const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                        if (iframeDoc) {
+                            planetList = iframeDoc.getElementById('planetList');
+                            if (planetList) {
+                                console.log("[DEBUG JS] planetList encontrado en iframe");
+                                break;
+                            }
+                        }
+                    } catch(e) {
+                        console.log("[DEBUG JS] Error accediendo iframe:", e.message);
+                    }
+                }
+            }
+            
+            if (!planetList) {
+                console.log("[DEBUG JS] No se encontró planetList en ningún lugar");
+                return null;
+            }
+            
+            console.log("[DEBUG JS] Buscando enlaces de planetas...");
+            const links = [];
+            
+            // Buscar todos los enlaces con clase planetlink
+            const planetLinks = planetList.querySelectorAll('a.planetlink');
+            console.log("[DEBUG JS] Links encontrados:", planetLinks.length);
+            
+            for (let link of planetLinks) {
+                const dataLink = link.getAttribute('data-link');
+                const planetNameEl = link.querySelector('.planet-name');
+                const planetName = planetNameEl ? planetNameEl.textContent.trim() : 'Unknown';
+                
+                console.log("[DEBUG JS] Planeta:", planetName, "Link:", dataLink);
+                
+                if (dataLink) {
+                    links.push({
+                        url: dataLink,
+                        name: planetName
+                    });
+                }
+            }
+            
+            console.log("[DEBUG JS] Total links retornados:", links.length);
+            return links.length > 0 ? links : null;
+        })();
+        """
+        
+        def handle_planets(planets):
+            print(f"[DEBUG] Resultado del script: {planets}")
+            if not planets or not isinstance(planets, list):
+                print("[DEBUG] ⚠️  No se encontraron planetas adicionales")
+                return
+            
+            print(f"[DEBUG] ✓ Encontrados {len(planets)} planetas: {[p['name'] for p in planets]}")
+            # Almacenar la lista y empezar a cargar
+            self.planets_to_load = planets
+            self.current_planet_index = 0
+            self.load_next_planet()
+        
+        # Ejecutar el script en el popup si existe (el sidebar está ahí),
+        # si no, caer back al web principal.
+        target_page = None
+        popup = None
+        if hasattr(self, 'popups') and self.popups:
+            try:
+                popup = self.popups[-1]
+                print("[DEBUG] Hay popup(s) abierto(s). Esperando sidebar en popup si es necesario...")
+            except Exception as e:
+                print("[DEBUG] Error accediendo popup list:", e)
+
+        def run_detection_on(page, description):
+            try:
+                print(f"[DEBUG] Ejecutando búsqueda de planetList en: {description}")
+                page.runJavaScript(script, handle_planets)
+            except Exception as e:
+                print("[DEBUG] Error ejecutando script de planetList:", e)
+
+        # Si tenemos popup, esperar a que tenga sidebar visible (has_sidebar)
+        if popup is not None:
+            def wait_for_sidebar(attempts=0):
+                try:
+                    if getattr(popup, 'has_sidebar', False):
+                        run_detection_on(popup.web.page(), 'popup')
+                        return
+                except Exception as e:
+                    print("[DEBUG] Error leyendo popup.has_sidebar:", e)
+
+                if attempts >= 20:  # ~10s timeout (20 * 500ms)
+                    print("[DEBUG] Timeout esperando sidebar en popup, fallback a web principal")
+                    run_detection_on(self.web.page(), 'web principal (fallback)')
+                    return
+
+                # volver a intentar en 500ms
+                QTimer.singleShot(500, lambda: wait_for_sidebar(attempts + 1))
+
+            wait_for_sidebar(0)
+        else:
+            run_detection_on(self.web.page(), 'web principal')
+
+    def load_next_planet(self):
+        """Carga el siguiente planeta de la lista."""
+        if not hasattr(self, 'planets_to_load') or self.current_planet_index >= len(self.planets_to_load):
+            print("[DEBUG] ✓ Todos los planetas cargados")
+            return
+        
+        planet = self.planets_to_load[self.current_planet_index]
+        print(f"[DEBUG] Cargando planeta {self.current_planet_index + 1}/{len(self.planets_to_load)}: {planet['name']}")
+        # Crear un PopupWindow (que contiene la lógica para extraer recursos/colas)
+        # Reutilizar el popup existente (el sidebar) en lugar de abrir nuevas ventanas
+        popup = None
+        if hasattr(self, 'popups') and self.popups:
+            popup = self.popups[-1]
+
+        if not popup:
+            # Si no hay popup disponible, avanzar para no bloquear
+            print('[DEBUG] No hay popup disponible para recargar, saltando...')
+            self.current_planet_index += 1
+            QTimer.singleShot(500, self.load_next_planet)
+            return
+
+        def finish_and_next():
+            try:
+                # Forzar extracción final desde el popup
+                try:
+                    popup.update_resources()
+                except Exception:
+                    pass
+                try:
+                    popup.update_queues()
+                except Exception:
+                    pass
+            finally:
+                QTimer.singleShot(500, self.load_next_planet)
+
+        def on_load_finished(ok=True):
+            try:
+                # desconectar este handler para evitar llamadas múltiples
+                popup.web.loadFinished.disconnect(on_load_finished)
+            except Exception:
+                pass
+            print(f"[DEBUG] Página de {planet['name']} recargada en popup, esperando datos...")
+            QTimer.singleShot(1200, finish_and_next)
+
+        try:
+            popup.web.loadFinished.connect(on_load_finished)
+            popup.web.load(QUrl(planet['url']))
+        except Exception as e:
+            print('[DEBUG] Error recargando popup:', e)
+            QTimer.singleShot(1000, finish_and_next)
+
+        # avanzar índice inmediatamente
+        self.current_planet_index += 1
 
     # ====================================================================
     #  PANEL PRINCIPAL
