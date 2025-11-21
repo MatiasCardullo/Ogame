@@ -249,8 +249,13 @@ class PopupWindow(QMainWindow):
 
         # 🔥 Enviar datos al MainWindow con la nueva API (incluye queues desde memoria)
         if self.main_window:
-            # pasar las queues actuales como lista ordenada (descartando claves internas)
-            queues_list = list(self.queue_memory.values())
+            # Filtrar queues: solo las que pertenecen a este planeta (por nombre AND coordenadas)
+            # Las queues GLOBAL (investigación) se envían también
+            queues_list = [
+                q for q in self.queue_memory.values()
+                if (q.get("planet_name") == self.current_planet_name and q.get("coords") == self.current_planet_coords) or 
+                   q.get("planet_name") == "GLOBAL"
+            ]
             # ordenar por end asc
             queues_list.sort(key=lambda q: q.get("end", time.time()))
             self.main_window.update_planet_data(
@@ -523,8 +528,13 @@ class PopupWindow(QMainWindow):
 
         # Enviar recursos + colas actualizados al MainWindow (si existe)
         if self.main_window and hasattr(self, "current_resources"):
-            # Pasar una copia ordenada de las colas
-            queues_list = list(self.queue_memory.values())
+            # Filtrar queues: solo las que pertenecen a este planeta (por nombre AND coordenadas)
+            # Las queues GLOBAL (investigación) se envían también
+            queues_list = [
+                q for q in self.queue_memory.values()
+                if (q.get("planet_name") == planet_name and q.get("coords") == coords) or 
+                   q.get("planet_name") == "GLOBAL"
+            ]
             queues_list.sort(key=lambda q: q.get("end", time.time()))
             self.main_window.update_planet_data(
                 planet_name=planet_name,

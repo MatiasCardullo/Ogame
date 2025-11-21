@@ -88,7 +88,8 @@ class MainWindow(QMainWindow):
         self.tray_icon.setVisible(True)
 
         # DATA
-        # planets_data keyed by planet_name -> dict(coords, resources, queues(list), last_update)
+        # planets_data keyed by planet_key (name|coords) -> dict(coords, resources, queues(list), last_update)
+        # Esto permite tener múltiples planetas con el mismo nombre pero diferentes coordenadas
         self.planets_data = {}
         # global queues (research, etc.) keyed by queue id
         self.global_queues = {}
@@ -106,6 +107,14 @@ class MainWindow(QMainWindow):
 
         self.notified_queues = set()
         self.popups = []
+
+    def _get_planet_key(self, planet_name, coords):
+        """Genera una clave única para un planeta basada en nombre y coordenadas.
+        Esto evita que planetas con el mismo nombre pero diferentes coordenadas se sobrescriban.
+        """
+        if not coords:
+            coords = "0:0:0"
+        return f"{planet_name}|{coords}"
 
     def open_popup(self):
         js = """
@@ -404,15 +413,24 @@ class MainWindow(QMainWindow):
                   f"<span style='color:#555;'>{'░'*(12-filled)}</span>"
             return f"{name} ({time_text}) [{bar}] {progress}%"
 
-        planet_names = list(self.planets_data.keys())
+        # Extraer nombres únicos y coordenadas de las claves
+        planet_info = []
+        for key in self.planets_data.keys():
+            parts = key.rsplit('|', 1)  # Separar por el último |
+            if len(parts) == 2:
+                name, coords = parts
+                planet_info.append((name, coords, key))
+            else:
+                planet_info.append((key, "0:0:0", key))
+        
         now = int(time.time())
 
         # ----- Investigaciones (global, deduplicadas por label+name)
         unique_research = {}
         #print(f"[DEBUG] Planetas en datos: {list(self.planets_data.keys())}")
-        for pname, pdata in self.planets_data.items():
+        for planet_key, pdata in self.planets_data.items():
             queues = pdata.get("queues", [])
-            #print(f"[DEBUG] {pname}: {len(queues)} colas")
+            #print(f"[DEBUG] {planet_key}: {len(queues)} colas")
             for q in queues:
                 label = (q.get("label", "") or "")
                 name = (q.get("name", "") or "")
@@ -450,9 +468,8 @@ class MainWindow(QMainWindow):
 
         # ----- Tabla recursos + colas por planeta
         html += "<table><tr><th>Recurso</th>"
-        for p in planet_names:
-            coords = self.planets_data[p].get("coords", "—")
-            html += f"<th>{p}<br><small>{coords}</small></th>"
+        for name, coords, key in planet_info:
+            html += f"<th>{name}<br><small>{coords}</small></th>"
         html += "</tr>"
 
         resource_names = ["Metal", "Cristal", "Deuterio", "Energía"]
@@ -467,8 +484,8 @@ class MainWindow(QMainWindow):
             rkey, capkey, prodkey, color = spec
             html += f"<tr><td><b>{rname}</b></td>"
 
-            for planet_name in planet_names:
-                pdata = self.planets_data[planet_name]
+            for name, coords, key in planet_info:
+                pdata = self.planets_data[key]
                 r = pdata["resources"]
 
                 if rkey == "energy":
@@ -493,8 +510,8 @@ class MainWindow(QMainWindow):
             "🌿 Forma de Vida": []
         }
 
-        for planet_name in planet_names:
-            for q in self.planets_data[planet_name].get("queues", []):
+        for name, coords, key in planet_info:
+            for q in self.planets_data[key].get("queues", []):
                 label = q.get("label", "")
                 end = int(q.get("end", now))
                 # Filtrar colas completadas (end <= now)
@@ -503,11 +520,11 @@ class MainWindow(QMainWindow):
                 if "Investigación" in label or "🧬" in label:
                     continue
                 elif "Forma de Vida" in label or "lf" in label.lower():
-                    queue_types["🌿 Forma de Vida"].append((planet_name, q))
+                    queue_types["🌿 Forma de Vida"].append((name, coords, q))
                 elif "Hangar" in label or "🚀" in label:
-                    queue_types["🚀 Hangar"].append((planet_name, q))
+                    queue_types["🚀 Hangar"].append((name, coords, q))
                 else:
-                    queue_types["🏗️ Construcciones"].append((planet_name, q))
+                    queue_types["🏗️ Construcciones"].append((name, coords, q))
 
         for qtype, entries in queue_types.items():
             if not entries:
@@ -515,8 +532,8 @@ class MainWindow(QMainWindow):
 
             html += f"<tr><td><b>{qtype}</b></td>"
 
-            for planet_name in planet_names:
-                planet_entries = [e for p, e in entries if p == planet_name]
+            for name, coords, key in planet_info:
+                planet_entries = [e for pname, pcoords, e in entries if pname == name and pcoords == coords]
                 if not planet_entries:
                     html += "<td>—</td>"
                     continue
@@ -549,8 +566,11 @@ class MainWindow(QMainWindow):
         if "last_update" not in resources:
             resources["last_update"] = time.time()
 
+        # Generar clave única basada en nombre + coordenadas
+        planet_key = self._get_planet_key(planet_name, coords)
+        
         # Asegurarse que planet_name exista
-        pdata = self.planets_data.get(planet_name, {})
+        pdata = self.planets_data.get(planet_key, {})
         pdata["coords"] = coords
         pdata["resources"] = resources
 
@@ -581,13 +601,14 @@ class MainWindow(QMainWindow):
                 # don't include in planet-specific list
                 continue
 
-            # Si la cola pertenece a este planeta, añadirla
-            if q_planet == planet_name:
+            # Si la cola pertenece a este planeta, verificar nombre Y coordenadas
+            # Esto es importante cuando hay múltiples planetas con el mismo nombre
+            if q_planet == planet_name and q_coords == coords:
                 qlist.append(entry)
 
         pdata["queues"] = qlist
         pdata["last_update"] = time.time()
-        self.planets_data[planet_name] = pdata
+        self.planets_data[planet_key] = pdata
 
         # Refrescar UI
         self.refresh_main_panel()
@@ -600,7 +621,7 @@ class MainWindow(QMainWindow):
             return
         now = time.time()
 
-        for p, pdata in self.planets_data.items():
+        for planet_key, pdata in self.planets_data.items():
             r = pdata["resources"]
             elapsed = now - r.get("last_update", now)
             if elapsed <= 0:
@@ -620,7 +641,9 @@ class MainWindow(QMainWindow):
         now = int(time.time())
         active_ids = set()
 
-        for pname, pdata in self.planets_data.items():
+        for planet_key, pdata in self.planets_data.items():
+            coords = pdata.get("coords", "0:0:0")
+            planet_name = planet_key.rsplit('|', 1)[0] if '|' in planet_key else planet_key
             for q in pdata.get("queues", []):
                 qid = q.get("id")
                 if not qid:
@@ -631,7 +654,7 @@ class MainWindow(QMainWindow):
                     try:
                         self.show_notification(
                             "✅ Cola completada",
-                            f"{pname}: {q.get('label','')} {q.get('name','')}"
+                            f"{planet_name} ({coords}): {q.get('label','')} {q.get('name','')}"
                         )
                     except Exception as e:
                         print("[DEBUG] Error al enviar notificación:", e)
