@@ -5,6 +5,7 @@ from PyQt6.QtCore import QUrl, QTimer, Qt
 from PyQt6.QtGui import QIcon
 from js_scripts import extract_auction_script
 from custom_page import CustomWebPage
+from sprite_widget import SpriteWidget
 from datetime import timedelta
 import time
 import os
@@ -57,6 +58,10 @@ class MainWindow(QMainWindow):
         self._notif_label = QLabel("")
         self._notif_label.setStyleSheet("color: #0f0; font-weight: bold; padding: 8px;")
         main_layout.addWidget(self._notif_label)
+
+        # Sprite Viewer
+        self.sprite_widget = SpriteWidget()
+        main_layout.addWidget(self.sprite_widget)
 
         self.main_label = QLabel("🪐 Panel Principal de Planetas (en desarrollo)")
         main_layout.addWidget(self.main_label)
