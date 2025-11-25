@@ -133,12 +133,12 @@ class SpriteWidget(QWidget):
         # ===========================================================
         # 3) Cargar sprite
         # ===========================================================
-        local_path=r"profile_data\cache\Cache\Cache_Data\f_00002d"
-        if os.path.isfile(local_path):
-            sprite = QPixmap(local_path)
-        else:
-            sprite = QPixmap()
-            sprite.loadFromData(self.load_image())
+        #local_path=r"profile_data\cache\Cache\Cache_Data\f_000031"
+        #if os.path.isfile(local_path):
+        #    sprite = QPixmap(local_path)
+        #else:
+        sprite = QPixmap()
+        sprite.loadFromData(self.load_image())
 
         # ===========================================================
         # 4) Columnas fijas por categoría
