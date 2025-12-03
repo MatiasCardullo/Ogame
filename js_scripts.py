@@ -1,5 +1,3 @@
-# JavaScript extraction scripts moved from sidebar_updater.py
-
 # --- Extrae metadatos del jugador / planeta ---
 extract_meta_script = """
 (function() {

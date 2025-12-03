@@ -6,12 +6,11 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QIcon
-import time
-import os
-import hashlib
+import time, os, hashlib
 
 from custom_page import CustomWebPage
 from js_scripts import extract_meta_script, extract_resources_script, extract_queue_functions
+from text import barra, produccion, tiempo_lleno
 
 
 def make_queue_id(label, name, planet_name, coords, start, end):
@@ -269,48 +268,29 @@ class PopupWindow(QMainWindow):
         r = getattr(self, "current_resources", None)
         if not r:
             return
-
-        def fmt(x):
-            return f"{int(x):,}".replace(",", ".")
-
-        def tiempo_lleno(cant, cap, prod):
-            if prod <= 0 or cant >= cap:
-                return "—"
-            horas = (cap - cant) / (prod * 3600)
-            if horas < 1:
-                return f"{horas*60:.1f}m"
-            return f"{horas:.1f}h"
-
-        def barra(cant, cap, color):
-            if cap <= 0:
-                return ""
-            ratio = min(1, cant / cap)
-            filled = int(20 * ratio)
-            empty = 20 - filled
-            return f"<span style='color:{color};'>{'█'*filled}</span><span style='color:#444;'>{'░'*empty}</span>"
-
-        pm = r["prod_metal"] * 3600
-        pc = r["prod_crystal"] * 3600
-        pd = r["prod_deuterium"] * 3600
+        
+        pm = produccion(r["prod_metal"])
+        pc = produccion(r["prod_crystal"])
+        pd = produccion(r["prod_deuterium"])
 
         tm = tiempo_lleno(r["metal"], r["cap_metal"], r["prod_metal"])
         tc = tiempo_lleno(r["crystal"], r["cap_crystal"], r["prod_crystal"])
         td = tiempo_lleno(r["deuterium"], r["cap_deuterium"], r["prod_deuterium"])
 
         self.metal_label.setText(
-            f"⚙️ Metal: {fmt(r['metal'])} <span style='color:#0f0;'> (+{fmt(pm)}/h)</span> lleno en {tm}<br>"
+            f"⚙️ Metal: {int(r['metal'])} <span style='color:#0f0;'> ({pm})</span> lleno en {tm}<br>"
             f"{barra(r['metal'], r['cap_metal'], '#0f0')}"
         )
         self.crystal_label.setText(
-            f"💎 Cristal: {fmt(r['crystal'])} <span style='color:#0af;'> (+{fmt(pc)}/h)</span> lleno en {tc}<br>"
+            f"💎 Cristal: {int(r['crystal'])} <span style='color:#0af;'> ({pc})</span> lleno en {tc}<br>"
             f"{barra(r['crystal'], r['cap_crystal'], '#0af')}"
         )
         self.deut_label.setText(
-            f"🧪 Deuterio: {fmt(r['deuterium'])} <span style='color:#ff0;'> (+{fmt(pd)}/h)</span> lleno en {td}<br>"
+            f"🧪 Deuterio: {int(r['deuterium'])} <span style='color:#ff0;'> ({pd})</span> lleno en {td}<br>"
             f"{barra(r['deuterium'], r['cap_deuterium'], '#ff0')}"
         )
         self.energy_label.setText(
-            f"⚡ Energía: {fmt(r['energy'])}"
+            f"⚡ Energía: {r['energy']}"
         )
 
     def increment_resources(self):
@@ -577,8 +557,6 @@ class PopupWindow(QMainWindow):
 
         finished_any = False
         queues_to_remove = []
-        
-        TIMER_QUEUE_REMOVAL = 5.0
 
         for entry in queues:
             label = entry.get("label", "")
@@ -600,36 +578,10 @@ class PopupWindow(QMainWindow):
 
             # Si la cola está al 100% (remaining <= 0), marcarla para eliminar después del timer
             if remaining <= 0 and qid:
-                if qid not in self.finished_queue_ids:
-                    # Primera vez que se completa: registrar timestamp
-                    self.finished_queue_ids[qid] = now
-                    finished_any = True
-                
-                # Verificar si ha pasado el tiempo de espera
-                time_since_finish = now - self.finished_queue_ids[qid]
-                if time_since_finish >= TIMER_QUEUE_REMOVAL:
-                    queues_to_remove.append(qid)
-                else:
-                    # Aún dentro del timer: mostrar como completada
-                    color = "#0f0"
-                    filled = 26
-                    bar = f"<span style='color:{color};'>{'█'*filled}</span>"
-                    is_research = (
-                        "investig" in label.lower()
-                        or "research" in label.lower()
-                        or "🧬" in label.lower()
-                    )
-                    if is_research:
-                        header = f"[GLOBAL] {label}: {name} {level}"
-                    else:
-                        header = f"[{planet_name} ({coords})] {label}: {name} {level}"
-                    lines.append(f"✅ {header} ({remaining_str}) [{bar}]")
-                
-                continue  # No mostrar en la lista normal
+                queues_to_remove.append(qid)
 
             color = "#0f0" if progress < 60 else "#ff0" if progress < 90 else "#f00"
-            filled = int(26 * progress / 100)
-            bar = f"<span style='color:{color};'>{'█'*filled}</span><span style='color:#555;'>{'░'*(26-filled)}</span>"
+            bar = barra(progress, 100, color)
 
             is_research = (
                 "investig" in label.lower()

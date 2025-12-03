@@ -7,10 +7,11 @@ from js_scripts import extract_auction_script
 from custom_page import CustomWebPage
 from sprite_widget import SpriteWidget
 from datetime import timedelta
-import time
-import os
+import time, os
 
-os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
+from text import barra, produccion, tiempo_lleno
+
+#os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
 
 class MainWindow(QMainWindow):
     """Ventana principal de OGame."""
@@ -351,44 +352,12 @@ class MainWindow(QMainWindow):
             self.main_label.setText(html)
             return
 
-        # Helpers
-        def barra(cant, cap, color):
-            try:
-                if cap <= 0:
-                    return ""
-                ratio = min(1, cant / cap)
-                filled = int(15 * ratio)
-                empty = 15 - filled
-                return f"<span style='color:{color};'>{'█'*filled}</span>" \
-                       f"<span style='color:#444;'>{'░'*empty}</span>"
-            except:
-                return ""
-
-        def fmt(x):
-            try:
-                return f"{int(x):,}".replace(",", ".")
-            except:
-                return str(x)
-
-        def tiempo_lleno(cant, cap, prod):
-            try:
-                if prod <= 0 or cant >= cap:
-                    return "—"
-                horas = (cap - cant) / (prod * 3600)
-                if horas < 1:
-                    return f"{horas*60:.1f}m"
-                return f"{horas:.1f}h"
-            except:
-                return "—"
 
         def format_queue_entry(entry, now):
-            """Formato amigable para mostrar una queue en la tabla principal."""
-            label = entry.get('label', '')
+            """Formato amigable para mostrar una queue"""
             name = entry.get('name', '')
             start = int(entry.get('start', now))
             end = int(entry.get('end', now))
-            planet_name = entry.get('planet_name', '—')
-            coords = entry.get('coords', '—')
 
             remaining = max(0, end - now)
             d, r = divmod(remaining, 86400)
@@ -408,10 +377,8 @@ class MainWindow(QMainWindow):
                 progress = min(100, max(0, int(((now - start) / (end - start)) * 100)))
 
             color = "#0f0" if progress < 60 else "#ff0" if progress < 90 else "#f00"
-            filled = int(12 * progress / 100)
-            bar = f"<span style='color:{color};'>{'█'*filled}</span>" \
-                  f"<span style='color:#555;'>{'░'*(12-filled)}</span>"
-            return f"{name} ({time_text}) [{bar}] {progress}%"
+            bar_html = barra(progress, 100, color)
+            return f"{name} ({time_text}) [{bar_html}] {progress}%"
 
         # Extraer nombres únicos y coordenadas de las claves
         planet_info = []
@@ -489,17 +456,16 @@ class MainWindow(QMainWindow):
                 r = pdata["resources"]
 
                 if rkey == "energy":
-                    html += f"<td>⚡ {fmt(r.get('energy', 0))}</td>"
+                    html += f"<td>⚡ {r.get('energy', 0)}</td>"
                     continue
 
                 cant = r.get(rkey, 0)
                 cap = r.get(capkey, 1)
                 prod = r.get(prodkey, 0)
-                prod_h = prod * 3600
-                ttf = tiempo_lleno(cant, cap, prod)
+                prod_t = produccion(prod)
+                full_t = tiempo_lleno(cant, cap, prod)
                 bar_html = barra(cant, cap, color)
-
-                html += f"<td>{fmt(cant)} (+{fmt(prod_h)}/h) lleno en {ttf}<br>{bar_html}</td>"
+                html += f"<td>{int(cant)} ({prod_t}) lleno en {full_t}<br>{bar_html}</td>"
 
             html += "</tr>"
 
