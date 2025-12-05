@@ -10,7 +10,7 @@ import time, os, hashlib
 
 from custom_page import CustomWebPage
 from js_scripts import extract_meta_script, extract_resources_script, extract_queue_functions
-from text import barra, produccion, tiempo_lleno
+from text import barra_html, produccion, tiempo_lleno, time_str
 
 
 def make_queue_id(label, name, planet_name, coords, start, end):
@@ -26,7 +26,7 @@ class PopupWindow(QMainWindow):
         super().__init__()
         self.main_window = main_window
         self.setWindowTitle("OGame Popup")
-        self.resize(1000, 700)
+        self.showMaximized()
 
         # Profile persistente (para mantener sesión)
         profile = profile or QWebEngineProfile("ogame_profile", self)
@@ -278,16 +278,16 @@ class PopupWindow(QMainWindow):
         td = tiempo_lleno(r["deuterium"], r["cap_deuterium"], r["prod_deuterium"])
 
         self.metal_label.setText(
-            f"⚙️ Metal: {int(r['metal'])} <span style='color:#0f0;'> ({pm})</span> lleno en {tm}<br>"
-            f"{barra(r['metal'], r['cap_metal'], '#0f0')}"
+            f"⚙️ Metal: {int(r['metal'])} <span style='color:#555;'> ({pm})</span> lleno en {tm}<br>"
+            f"{barra_html(r['metal'], r['cap_metal'], '#555')}"
         )
         self.crystal_label.setText(
-            f"💎 Cristal: {int(r['crystal'])} <span style='color:#0af;'> ({pc})</span> lleno en {tc}<br>"
-            f"{barra(r['crystal'], r['cap_crystal'], '#0af')}"
+            f"💎 Cristal: {int(r['crystal'])} <span style='color:#aff;'> ({pc})</span> lleno en {tc}<br>"
+            f"{barra_html(r['crystal'], r['cap_crystal'], '#aff')}"
         )
         self.deut_label.setText(
-            f"🧪 Deuterio: {int(r['deuterium'])} <span style='color:#ff0;'> ({pd})</span> lleno en {td}<br>"
-            f"{barra(r['deuterium'], r['cap_deuterium'], '#ff0')}"
+            f"🧪 Deuterio: {int(r['deuterium'])} <span style='color:#0f8;'> ({pd})</span> lleno en {td}<br>"
+            f"{barra_html(r['deuterium'], r['cap_deuterium'], '#0f8')}"
         )
         self.energy_label.setText(
             f"⚡ Energía: {r['energy']}"
@@ -569,8 +569,7 @@ class PopupWindow(QMainWindow):
             qid = entry.get("id")
 
             remaining = max(0, end - now)
-            m, s = divmod(int(remaining), 60)
-            remaining_str = f"{m}m {s:02d}s" if remaining > 0 else "Completado"
+            remaining_str = time_str(remaining) if remaining > 0 else "Completado"
 
             progress = 0
             if end > start:
@@ -581,7 +580,7 @@ class PopupWindow(QMainWindow):
                 queues_to_remove.append(qid)
 
             color = "#0f0" if progress < 60 else "#ff0" if progress < 90 else "#f00"
-            bar = barra(progress, 100, color)
+            bar = barra_html(progress, 100, color, 30)
 
             is_research = (
                 "investig" in label.lower()
@@ -589,14 +588,17 @@ class PopupWindow(QMainWindow):
                 or "🧬" in label.lower()
             )
             if is_research:
-                header = f"[GLOBAL] {label}: {name} {level}"
+                output = f"[GLOBAL]"
             else:
-                header = f"[{planet_name} ({coords})] {label}: {name} {level}"
-            lines.append(f"{header} ({remaining_str})<br>[{bar}] {progress}%")
+                output = f"[{coords}]"
+            output = f"{output} {label}: {name} {level} ({remaining_str})"
+            if remaining > 0:
+                output = f"{output}<br>[{bar}] {progress}%"
+            lines.append(output)
 
         # Render
         try:
-            self.queue_text.setHtml("<br><br>".join(lines))
+            self.queue_text.setHtml("<br>".join(lines))
         except Exception:
             try:
                 self.queue_text.setPlainText("\n\n".join(lines))

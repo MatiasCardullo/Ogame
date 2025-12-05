@@ -8,8 +8,7 @@ from custom_page import CustomWebPage
 from sprite_widget import SpriteWidget
 from datetime import timedelta
 import time, os
-
-from text import barra, produccion, tiempo_lleno
+from text import barra_html, produccion, tiempo_lleno, time_str
 
 #os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
 
@@ -19,7 +18,7 @@ class MainWindow(QMainWindow):
     def __init__(self, profile=None, url=None):
         super().__init__()
         self.setWindowTitle("OGame — Main")
-        self.resize(1450, 900)
+        self.showMaximized()
 
         # Profile
         profile = profile or QWebEngineProfile("ogame_profile", self)
@@ -353,33 +352,34 @@ class MainWindow(QMainWindow):
             return
 
 
-        def format_queue_entry(entry, now):
-            """Formato amigable para mostrar una queue"""
+        def queue_entry(entry, now):
             name = entry.get('name', '')
-            start = int(entry.get('start', now))
-            end = int(entry.get('end', now))
+            start = entry.get('start', now)
+            end = entry.get('end', now)
 
             remaining = max(0, end - now)
-            d, r = divmod(remaining, 86400)
-            h, r = divmod(r, 3600)
-            m, s = divmod(r, 60)
-
-            if d > 0:
-                parts = [f"{d}d"]
-                if h > 0: parts.append(f"{h}h")
-                if m > 0: parts.append(f"{m}m")
-                time_text = " ".join(parts)
-            else:
-                time_text = f"{h}:{m:02d}:{s:02d}"
+            time = time_str(remaining)
 
             progress = 0
             if end > start:
-                progress = min(100, max(0, int(((now - start) / (end - start)) * 100)))
+                progress = min(100, max(0, ((now - start) / (end - start)) * 100))
 
-            color = "#0f0" if progress < 60 else "#ff0" if progress < 90 else "#f00"
-            bar_html = barra(progress, 100, color)
-            return f"{name} ({time_text}) [{bar_html}] {progress}%"
+            return name, time, progress
 
+        def format_queue_entry(entry,now):
+            """Formato amigable para mostrar una queue"""
+            name, time, progress = queue_entry(entry,now)
+            color = "#0f0" if progress < 75 else "#ff0" if progress < 95 else "#f00"
+            barra = barra_html(progress, 100, color, 25)
+            return f"{name} [{progress:.2f}%] ({time})<br>{barra}"
+        
+        def format_research_queue_entry(entry,now):
+            """Formato amigable para mostrar una queue de Investigacion"""
+            name, time, progress = queue_entry(entry,now)
+            color = "#0f0" if progress < 89 else "#ff0" if progress < 95 else "#f00"
+            barra = barra_html(progress, 100, color, 50)
+            return f"{barra} {name} [{progress:.2f}%] ({time})"
+        
         # Extraer nombres únicos y coordenadas de las claves
         planet_info = []
         for key in self.planets_data.keys():
@@ -430,7 +430,7 @@ class MainWindow(QMainWindow):
                 end = int(entry.get("end", now))
                 if end <= now:
                     continue
-                html += format_queue_entry(entry, now) + "<br>"
+                html += format_research_queue_entry(entry, now) + "<br>"
             html += "</div>"
 
         # ----- Tabla recursos + colas por planeta
@@ -441,9 +441,9 @@ class MainWindow(QMainWindow):
 
         resource_names = ["Metal", "Cristal", "Deuterio", "Energía"]
         resource_specs = [
-            ("metal", "cap_metal", "prod_metal", "#0f0"),
-            ("crystal", "cap_crystal", "prod_crystal", "#0af"),
-            ("deuterium", "cap_deuterium", "prod_deuterium", "#ff0"),
+            ("metal", "cap_metal", "prod_metal", "#555"),
+            ("crystal", "cap_crystal", "prod_crystal", "#aff"),
+            ("deuterium", "cap_deuterium", "prod_deuterium", "#0f8"),
             ("energy", None, None, "#f0f")
         ]
 
@@ -461,11 +461,12 @@ class MainWindow(QMainWindow):
 
                 cant = r.get(rkey, 0)
                 cap = r.get(capkey, 1)
-                prod = r.get(prodkey, 0)
-                prod_t = produccion(prod)
-                full_t = tiempo_lleno(cant, cap, prod)
-                bar_html = barra(cant, cap, color)
-                html += f"<td>{int(cant)} ({prod_t}) lleno en {full_t}<br>{bar_html}</td>"
+                prodInt = r.get(prodkey, 0)
+                prod = produccion(prodInt)
+                full = tiempo_lleno(cant, cap, prodInt)
+                char = "#0f0" if (cant / cap) < 0.9 else "#ff0" if cant < cap else "#f00"
+                barra = barra_html(cant, cap, color, 24) + f"<span style='color:{char};'>{'█'}</span>"
+                html += f"<td>{int(cant)} ({prod}) lleno en {full}<br>{barra}</td>"
 
             html += "</tr>"
 
@@ -505,8 +506,10 @@ class MainWindow(QMainWindow):
                     continue
 
                 html += "<td>"
-                for e in planet_entries:
-                    html += format_queue_entry(e, now) + "<br>"
+                for idx, e in enumerate(planet_entries):
+                    html += format_queue_entry(e, now)
+                    if idx < len(planet_entries) - 1:
+                        html += "<br>"
                 html += "</td>"
 
             html += "</tr>"
