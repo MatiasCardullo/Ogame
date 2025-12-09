@@ -10,7 +10,7 @@ import time, os, hashlib
 
 from custom_page import CustomWebPage
 from js_scripts import extract_meta_script, extract_resources_script, extract_queue_functions
-from text import barra_html, produccion, tiempo_lleno, time_str
+from text import barra_html, cantidad, produccion, tiempo_lleno, time_str
 
 
 def make_queue_id(label, name, planet_name, coords, start, end):
@@ -150,7 +150,6 @@ class PopupWindow(QMainWindow):
         # Colas
         self.queue_text = QTextEdit()
         self.queue_text.setReadOnly(True)
-        self.queue_text.setFixedHeight(220)
         sidebar_layout.addWidget(QLabel("📋 Colas activas:"))
         sidebar_layout.addWidget(self.queue_text)
 
@@ -278,15 +277,15 @@ class PopupWindow(QMainWindow):
         td = tiempo_lleno(r["deuterium"], r["cap_deuterium"], r["prod_deuterium"])
 
         self.metal_label.setText(
-            f"⚙️ Metal: {int(r['metal'])} <span style='color:#555;'> ({pm})</span> lleno en {tm}<br>"
+            f"⚙️ Metal: {cantidad(r['metal'])} <span style='color:#555;'> ({pm})</span> lleno en {tm}<br>"
             f"{barra_html(r['metal'], r['cap_metal'], '#555')}"
         )
         self.crystal_label.setText(
-            f"💎 Cristal: {int(r['crystal'])} <span style='color:#aff;'> ({pc})</span> lleno en {tc}<br>"
+            f"💎 Cristal: {cantidad(r['crystal'])} <span style='color:#aff;'> ({pc})</span> lleno en {tc}<br>"
             f"{barra_html(r['crystal'], r['cap_crystal'], '#aff')}"
         )
         self.deut_label.setText(
-            f"🧪 Deuterio: {int(r['deuterium'])} <span style='color:#0f8;'> ({pd})</span> lleno en {td}<br>"
+            f"🧪 Deuterio: {cantidad(r['deuterium'])} <span style='color:#0f8;'> ({pd})</span> lleno en {td}<br>"
             f"{barra_html(r['deuterium'], r['cap_deuterium'], '#0f8')}"
         )
         self.energy_label.setText(

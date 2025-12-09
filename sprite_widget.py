@@ -23,7 +23,7 @@ class IconWidget(QWidget):
         if state == 0:
             control = QLineEdit(self)
             control.setPlaceholderText("0")
-            control.setFixedSize(40, 22)
+            control.setFixedSize(22, 22)
         else:
             control = QPushButton(self)
             control.setStyleSheet("""
@@ -34,7 +34,6 @@ class IconWidget(QWidget):
             control.setFixedSize(22, 22)
         control.move(4, 4)
         control.raise_()
-
 
 class SpriteWidget(QWidget):
     def __init__(self, parent=None):
@@ -133,12 +132,10 @@ class SpriteWidget(QWidget):
         # ===========================================================
         # 3) Cargar sprite
         # ===========================================================
-        #local_path=r"profile_data\cache\Cache\Cache_Data\f_000031"
-        #if os.path.isfile(local_path):
-        #    sprite = QPixmap(local_path)
-        #else:
-        sprite = QPixmap()
-        sprite.loadFromData(self.load_image())
+        local_path=f"profile_data\sprites.png"
+        if not os.path.isfile(local_path):
+            self.load_image(local_path)
+        sprite = QPixmap(local_path)
 
         # ===========================================================
         # 4) Columnas fijas por categoría
@@ -171,6 +168,8 @@ class SpriteWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(scroll)
 
-    def load_image(self):
+    def load_image(self,local_path):
         import requests
-        return requests.get("https://gf3.geo.gfsrv.net/cdn53/7a9861be0c38bf7de05a57c56d73cf.jpg").content
+        sprites = requests.get("https://gf3.geo.gfsrv.net/cdn53/7a9861be0c38bf7de05a57c56d73cf.jpg").content
+        with open(local_path, 'wb') as f:
+            f.write(sprites)

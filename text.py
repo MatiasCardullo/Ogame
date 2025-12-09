@@ -52,3 +52,12 @@ def produccion(prod):
     else:
         prod_t = f"{prod*3600:+.2f}/h"
     return prod_t
+
+def cantidad(cant):
+    if cant > 1000000:
+        cant_t = f"{(cant/1000000):.2f}M"
+    elif cant > 1000:
+        cant_t = f"{(cant/1000):.2f}k"
+    else:
+        cant_t = f"{cant}"
+    return cant_t

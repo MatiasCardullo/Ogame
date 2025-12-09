@@ -8,7 +8,7 @@ from custom_page import CustomWebPage
 from sprite_widget import SpriteWidget
 from datetime import timedelta
 import time, os
-from text import barra_html, produccion, tiempo_lleno, time_str
+from text import barra_html, cantidad, produccion, tiempo_lleno, time_str
 
 #os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
 
@@ -18,7 +18,6 @@ class MainWindow(QMainWindow):
     def __init__(self, profile=None, url=None):
         super().__init__()
         self.setWindowTitle("OGame — Main")
-        self.showMaximized()
 
         # Profile
         profile = profile or QWebEngineProfile("ogame_profile", self)
@@ -117,6 +116,7 @@ class MainWindow(QMainWindow):
         return f"{planet_name}|{coords}"
 
     def open_popup(self):
+        self.showMaximized()
         js = """
         (async function() {
             try {
@@ -466,7 +466,7 @@ class MainWindow(QMainWindow):
                 full = tiempo_lleno(cant, cap, prodInt)
                 char = "#0f0" if (cant / cap) < 0.9 else "#ff0" if cant < cap else "#f00"
                 barra = barra_html(cant, cap, color, 24) + f"<span style='color:{char};'>{'█'}</span>"
-                html += f"<td>{int(cant)} ({prod}) lleno en {full}<br>{barra}</td>"
+                html += f"<td>{cantidad(cant)} ({prod}) lleno en {full}<br>{barra}</td>"
 
             html += "</tr>"
 
