@@ -49,6 +49,11 @@ class PopupWindow(QMainWindow):
             btn = QPushButton(text)
             btn.clicked.connect(func)
             self.toolbar.addWidget(btn)
+        
+        # Botón para scrapear
+        scrape_btn = QPushButton("🔄 Scrapear")
+        scrape_btn.clicked.connect(self.scrape_tech_tree)
+        self.toolbar.addWidget(scrape_btn)
 
         # Layout principal
         self.container = QWidget()
@@ -629,6 +634,131 @@ class PopupWindow(QMainWindow):
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(html)
         self.web.page().toHtml(handle_html)
+
+    def scrape_tech_tree(self):
+        """Abre ventana separada y scrapeá tecnologías con QWebEngineView"""
+        import json
+        
+        scrape_win = QMainWindow()
+        scrape_win.setWindowTitle("Scrapenado...")
+        scrape_win.resize(1200, 700)
+        
+        scrape_web = QWebEngineView()
+        scrape_web.setPage(CustomWebPage(self.page.profile(), scrape_web))
+        
+        scrape_win.setCentralWidget(scrape_web)
+        scrape_win.show()
+        
+        url = "https://s163-ar.ogame.gameforge.com/game/index.php?page=ajax&component=technologytree&ajax=1&technologyId=1&tab=3"
+        scrape_web.load(QUrl(url))
+        
+        tech_list = []
+        scraping_state = {'idx': 0}
+        on_loaded_connection = None
+        
+        def extract_techs():
+            js = """
+            (function() {
+                let techs = [];
+                let contentDiv = document.querySelector('div.content.technologies');
+                if (!contentDiv) return [];
+                let uls = contentDiv.querySelectorAll('ul');
+                uls.forEach((ul) => {
+                    let h1 = null;
+                    let el = ul.previousElementSibling;
+                    while (el && el.tagName !== 'H1') el = el.previousElementSibling;
+                    let category = el ? el.textContent.trim() : '';
+                    
+                    ul.querySelectorAll('li').forEach(li => {
+                        let a = li.querySelector('a.technology');
+                        if (a) {
+                            let href = a.getAttribute('href') || '';
+                            let id = null;
+                            if (href.includes('technologyId=')) {
+                                id = parseInt(href.split('technologyId=')[1].split('&')[0]);
+                            }
+                            techs.push({
+                                name: a.textContent.trim(),
+                                technologyId: id,
+                                category: category,
+                                href: href,
+                                info: ''
+                            });
+                        }
+                    });
+                });
+                return techs;
+            })();
+            """
+            scrape_web.page().runJavaScript(js, process_techs)
+        
+        def process_techs(techs):
+            nonlocal tech_list
+            tech_list = techs if techs else []
+            print(f"Encontradas {len(tech_list)} tecnologías")
+            # Desconectar extract_techs para que no se ejecute de nuevo
+            scrape_web.loadFinished.disconnect(extract_techs)
+            if tech_list:
+                scraping_state['idx'] = 0
+                fetch_next_info()
+            else:
+                scrape_win.close()
+        
+        def fetch_next_info():
+            nonlocal on_loaded_connection
+            
+            idx = scraping_state['idx']
+            if idx >= len(tech_list):
+                with open("technologies_data.json", "w", encoding="utf-8") as f:
+                    json.dump(tech_list, f, ensure_ascii=False, indent=2)
+                print("✅ Datos guardados en technologies_data.json")
+                scrape_win.close()
+                return
+            
+            tech = tech_list[idx]
+            print(f"{idx+1}/{len(tech_list)}: {tech['name']}")
+            url_info = f"https://s163-ar.ogame.gameforge.com/game/index.php?page=ajax&component=technologytree&ajax=1&technologyId={tech['technologyId']}&tab=2"
+            
+            # Desconectar conexión anterior si existe
+            if on_loaded_connection is not None:
+                try:
+                    scrape_web.loadFinished.disconnect(on_loaded_connection)
+                except:
+                    pass
+            
+            # Nueva conexión
+            def on_loaded():
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(300, extract_info)
+            
+            def extract_info():
+                js_get_info = """
+                (function() {
+                    let info = '';
+                    let ps = document.querySelectorAll('p');
+                    for (let p of ps) {
+                        let t = p.textContent.trim();
+                        if (t.length > 100) {
+                            info = t;
+                            break;
+                        }
+                    }
+                    return info;
+                })();
+                """
+                scrape_web.page().runJavaScript(js_get_info, got_info)
+            
+            def got_info(info):
+                if scraping_state['idx'] < len(tech_list):
+                    tech_list[scraping_state['idx']]['info'] = info or ''
+                scraping_state['idx'] += 1
+                fetch_next_info()
+            
+            on_loaded_connection = on_loaded
+            scrape_web.loadFinished.connect(on_loaded)
+            scrape_web.load(QUrl(url_info))
+        
+        scrape_web.loadFinished.connect(extract_techs)
 
     # -------------------------------------------------------------
     # Cierre
