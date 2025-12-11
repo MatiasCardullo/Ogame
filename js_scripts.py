@@ -8,6 +8,27 @@ extract_meta_script = """
 })();
 """
 
+detect_production_script = """
+    (function() {
+        return {
+            building_present: !!document.querySelector('#productionboxbuildingcomponent'),
+            building: !!document.querySelector('#productionboxbuildingcomponent .construction.active'),
+
+            research_present: !!document.querySelector('#productionboxresearchcomponent'),
+            research: !!document.querySelector('#productionboxresearchcomponent .construction.active'),
+
+            lf_building_present: !!document.querySelector('#productionboxlfbuildingcomponent'),
+            lf_building: !!document.querySelector('#productionboxlfbuildingcomponent .construction.active'),
+
+            lf_research_present: !!document.querySelector('#productionboxlfresearchcomponent'),
+            lf_research: !!document.querySelector('#productionboxlfresearchcomponent .construction.active'),
+
+            shipyard_present: !!document.querySelector('#productionboxshipyardcomponent'),
+            shipyard: !!document.querySelector('#productionboxshipyardcomponent .construction.active')
+        };
+    })();
+"""
+
 extract_resources_script = """
 (function() {
     try {
@@ -163,3 +184,89 @@ extract_auction_script = """
     return auction;
 })();
 """
+
+tech_scrapper = """
+(function() {
+    let techs = [];
+    let contentDiv = document.querySelector('div.content.technologies');
+    if (!contentDiv) return [];
+    let uls = contentDiv.querySelectorAll('ul');
+    uls.forEach((ul) => {
+        let h1 = null;
+        let el = ul.previousElementSibling;
+        while (el && el.tagName !== 'H1') el = el.previousElementSibling;
+        let category = el ? el.textContent.trim() : '';
+        
+        ul.querySelectorAll('li').forEach(li => {
+            let a = li.querySelector('a.technology');
+            if (a) {
+                let href = a.getAttribute('href') || '';
+                let id = null;
+                if (href.includes('technologyId=')) {
+                    id = parseInt(href.split('technologyId=')[1].split('&')[0]);
+                }
+                techs.push({
+                    name: a.textContent.trim(),
+                    technologyId: id,
+                    category: category,
+                    href: href,
+                    info: ''
+                });
+            }
+        });
+    });
+    return techs;
+})();
+"""
+
+lf_tech_scrapper = """
+(function() {
+    let container = document.querySelector('#technologies');
+    if (!container) return [];
+    let out = [];
+    let items = container.querySelectorAll('div.lfsettingsContent');
+    items.forEach((el, idx) => {
+        let lfNameEl = el.querySelector('h3');
+        let lfName = lfNameEl ? lfNameEl.textContent.trim() : ('lifeform-'+idx);
+        let buildings = [];
+        let researches = [];
+        // buscar bloques que contengan technologyInfo
+        let blocks = el.querySelectorAll('div');
+        blocks.forEach(block => {
+            let cat = block.getAttribute('data-category') || '';
+            if (!cat) return;
+            // find technologyInfo inside
+            block.querySelectorAll('div.technologyInfo').forEach(ti => {
+                let tnameEl = ti.querySelector('.technologyName');
+                let tname = tnameEl ? tnameEl.textContent.trim() : '';
+                let btn = ti.querySelector('button[data-target]');
+                let href = btn ? btn.getAttribute('data-target') : '';
+                let id = null;
+                if (href && href.indexOf('technologyId=') !== -1) {
+                    try { id = parseInt(href.split('technologyId=')[1].split('&')[0]); } catch(e) { id = null; }
+                }
+                let entry = { name: tname, technologyId: id, href: href, info: '' };
+                if (cat.startsWith('buildingLifeform')) buildings.push(entry);
+                if (cat.startsWith('researchLifeform')) researches.push(entry);
+            });
+        });
+        out.push({ name: lfName, buildings: buildings, researches: researches });
+    });
+    return out;
+})();
+"""
+
+get_info = """
+                (function() {
+                    let info = '';
+                    let ps = document.querySelectorAll('p');
+                    for (let p of ps) {
+                        let t = p.textContent.trim();
+                        if (t.length > 100) {
+                            info = t;
+                            break;
+                        }
+                    }
+                    return info;
+                })();
+                """
