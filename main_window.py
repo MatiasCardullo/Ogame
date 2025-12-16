@@ -1,3 +1,4 @@
+import json
 from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, QPushButton, QSystemTrayIcon
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
@@ -10,7 +11,7 @@ from datetime import timedelta
 import time, os
 from text import barra_html, cantidad, produccion, tiempo_lleno, time_str
 
-#os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
+os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
 
 class MainWindow(QMainWindow):
     """Ventana principal de OGame."""
@@ -33,8 +34,6 @@ class MainWindow(QMainWindow):
         # ----- Tab navegador -----
         self.browser_tab = QWidget()
         self.browser_box = QHBoxLayout()
-
-        # Base URL para las vistas secundarias (galaxy, fleet, etc.)
         self.base_url = "https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame"
 
         # Login: se muestra inicialmente, pero lo ocultaremos automáticamente
@@ -42,8 +41,6 @@ class MainWindow(QMainWindow):
         # un contenedor junto a un botón para mostrar/ocultar.
         self.login = self.web_engine(profile, url)
         self.login.loadFinished.connect(self.open_popup)
-
-        # Contenedor izquierdo con botón de toggle + login
         self.left_widget = QWidget()
         left_layout = QVBoxLayout()
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -52,13 +49,11 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.toggle_login_btn)
         left_layout.addWidget(self.login)
         self.left_widget.setLayout(left_layout)
-
         self.browser_box.addWidget(self.left_widget)
 
         # Las vistas secundarias (galaxy, fleet, etc.) se crearán después de
         # que open_popup haya terminado para evitar carga prematura.
         self.secondary_views_created = False
-
         self.browser_tab.setLayout(self.browser_box)
         self.tabs.addTab(self.browser_tab, "🌐 Navegador")
 
@@ -71,15 +66,12 @@ class MainWindow(QMainWindow):
         """)
         self.main_panel.setLayout(main_layout)
 
-        # Notificaciones
+        # Panel Principal
         self._notif_label = QLabel("")
         self._notif_label.setStyleSheet("color: #0f0; font-weight: bold; padding: 8px;")
         main_layout.addWidget(self._notif_label)
-
-        # Sprite Viewer
         self.sprite_widget = SpriteWidget()
         main_layout.addWidget(self.sprite_widget)
-
         self.main_label = QLabel("🪐 Panel Principal de Planetas (en desarrollo)")
         main_layout.addWidget(self.main_label)
         self.tabs.addTab(self.main_panel, "📊 Panel Principal")
@@ -180,16 +172,9 @@ class MainWindow(QMainWindow):
         def done(result):
             print("[DEBUG] Primer planeta cargado, iniciando carga de otros planetas...")
             self.tabs.setCurrentWidget(self.main_panel)
-            # Ocultar el login automáticamente y actualizar el texto del botón
-            try:
-                self.login.hide()
-                self.left_widget.setFixedWidth(55)
-                self.toggle_login_btn.setText("Mostrar\nLogin")
-            except Exception:
-                pass
-
-            # Crear vistas secundarias (galaxy, fleet, ...) ahora que el popup
-            # y el login inicial terminaron de cargar.
+            self.login.hide()
+            self.left_widget.setFixedWidth(55)
+            self.toggle_login_btn.setText("Mostrar\nLogin")
             try:
                 self.create_secondary_views()
             except Exception as e:
@@ -197,6 +182,74 @@ class MainWindow(QMainWindow):
 
             QTimer.singleShot(1000, self.load_other_planets)
         QTimer.singleShot(3000, lambda: self.login.page().runJavaScript(js, done))
+
+    def create_secondary_views(self):
+        """Crea y añade `galaxy` y `fleet` al layout si no existen todavía."""
+        if getattr(self, 'secondary_views_created', False):
+            return
+
+        try:
+            self.galaxy = self.web_engine(self.profile, f"{self.base_url}&component=galaxy&galaxy=1&system=1")
+            self.galaxy.loadFinished.connect(self.galaxy_scraper)
+            self.browser_box.addWidget(self.galaxy)
+
+            self.fleet = self.web_engine(self.profile, f"{self.base_url}&component=movement")
+            self.fleet.loadFinished.connect(lambda: self.div_middle(self.fleet))
+            self.browser_box.addWidget(self.fleet)
+
+            self.secondary_views_created = True
+            print("[DEBUG] Vistas secundarias creadas: galaxy, fleet")
+        except Exception as e:
+            print("[DEBUG] Error al crear vistas secundarias:", e)
+
+    def toggle_login_visibility(self):
+        """Muestra/oculta la vista de login y actualiza el texto del botón."""
+        try:
+            if getattr(self, 'login', None) and self.login.isVisible():
+                self.login.hide()
+                self.left_widget.setFixedWidth(55)
+                self.toggle_login_btn.setText("Mostrar\nLogin")
+            else:
+                if getattr(self, 'login', None):
+                    self.login.show()
+                self.left_widget.setFixedWidth(150)
+                self.toggle_login_btn.setText("Ocultar Login")
+        except Exception as e:
+            print("[DEBUG] Error toggling login visibility:", e)
+
+    def div_middle(self, webview):
+        """Muestra solo el div middle en el QWebEngineView dado"""
+        js = """
+        const middle = document.getElementById("middle");
+        if (middle) {
+            document.body.innerHTML = "";
+            document.body.appendChild(middle.cloneNode(true));
+        }
+        """
+        webview.page().runJavaScript(js)
+    
+    def galaxy_scraper(self):
+        self.data = {}
+        self.n_galaxy = 1
+        self.n_system = 1
+        self.max_galaxy = 5
+        self.max_system = 499
+        self.output_file = "galaxy_data.json"
+        js = """
+        const middle = document.getElementById("inhalt");
+        if (middle) {
+            document.body.innerHTML = "";
+            document.body.appendChild(middle.cloneNode(true));
+        }
+        """
+        self.galaxy.page().runJavaScript(js)
+
+        # ---------------- TO DO ----------------
+        # ---------------- ESPERAR COMPONENTE GALAXY ----------------
+        # ---------------- INYECTAR JS ----------------
+        # ---------------- LOOP PRINCIPAL ----------------
+        # ---------------- EXTRAER DATA ----------------
+        # ---------------- GUARDAR ----------------
 
     # ====================================================================
     #  CARGAR OTROS PLANETAS
@@ -305,7 +358,7 @@ class MainWindow(QMainWindow):
 
                 if attempts >= 20:  # ~10s timeout (20 * 500ms)
                     print("[DEBUG] Timeout esperando sidebar en popup, fallback a web principal")
-                    run_detection_on(self.web.page(), 'web principal (fallback)')
+                    run_detection_on(self.login.page(), 'web principal (fallback)')
                     return
 
                 # volver a intentar en 500ms
@@ -640,7 +693,10 @@ class MainWindow(QMainWindow):
             r["crystal"] += r.get("prod_crystal", 0) * elapsed
             r["deuterium"] += r.get("prod_deuterium", 0) * elapsed
 
-        self.refresh_main_panel()
+        try:
+            self.refresh_main_panel()
+        except Exception as e:
+            print(e)
 
     # ====================================================================
     #  CHECK QUEUES GLOBALES (notificaciones)
@@ -693,50 +749,6 @@ class MainWindow(QMainWindow):
             except KeyError:
                 pass
 
-    def div_middle(self, webview):
-        """Muestra solo el div middle en el QWebEngineView dado"""
-        js = """
-        const middle = document.getElementById("middle");
-        if (middle) {
-            document.body.innerHTML = "";
-            document.body.appendChild(middle.cloneNode(true));
-        }
-        """
-        webview.page().runJavaScript(js)
-
-    def create_secondary_views(self):
-        """Crea y añade `galaxy` y `fleet` al layout si no existen todavía."""
-        if getattr(self, 'secondary_views_created', False):
-            return
-
-        try:
-            self.galaxy = self.web_engine(self.profile, f"{self.base_url}&component=galaxy")
-            self.galaxy.loadFinished.connect(lambda: self.div_middle(self.galaxy))
-            self.browser_box.addWidget(self.galaxy)
-
-            self.fleet = self.web_engine(self.profile, f"{self.base_url}&component=movement")
-            self.fleet.loadFinished.connect(lambda: self.div_middle(self.fleet))
-            self.browser_box.addWidget(self.fleet)
-
-            self.secondary_views_created = True
-            print("[DEBUG] Vistas secundarias creadas: galaxy, fleet")
-        except Exception as e:
-            print("[DEBUG] Error al crear vistas secundarias:", e)
-
-    def toggle_login_visibility(self):
-        """Muestra/oculta la vista de login y actualiza el texto del botón."""
-        try:
-            if getattr(self, 'login', None) and self.login.isVisible():
-                self.login.hide()
-                self.left_widget.setFixedWidth(55)
-                self.toggle_login_btn.setText("Mostrar\nLogin")
-            else:
-                if getattr(self, 'login', None):
-                    self.login.show()
-                self.toggle_login_btn.setText("Ocultar Login")
-        except Exception as e:
-            print("[DEBUG] Error toggling login visibility:", e)
-    
     # ====================================================================
     #  SUBASTA
     # ====================================================================

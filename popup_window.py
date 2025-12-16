@@ -256,12 +256,15 @@ class PopupWindow(QMainWindow):
             ]
             # ordenar por end asc
             queues_list.sort(key=lambda q: q.get("end", time.time()))
-            self.main_window.update_planet_data(
-                planet_name=self.current_planet_name,
-                coords=self.current_planet_coords,
-                resources=self.current_resources,
-                queues=queues_list
-            )
+            try:
+                self.main_window.update_planet_data(
+                    planet_name=self.current_planet_name,
+                    coords=self.current_planet_coords,
+                    resources=self.current_resources,
+                    queues=queues_list
+                )
+            except Exception as e:
+                print(e)
 
     def update_resource_labels(self):
         r = getattr(self, "current_resources", None)
