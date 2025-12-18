@@ -189,9 +189,11 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self.galaxy = self.web_engine(self.profile, f"{self.base_url}&component=galaxy&galaxy=1&system=1")
-            self.galaxy.loadFinished.connect(self.galaxy_scraper)
-            self.browser_box.addWidget(self.galaxy)
+            self.galaxy_box = QVBoxLayout()
+            self.galaxy_debug = QTextEdit()
+            self.galaxy_scraper()
+            self.galaxy_box.addWidget(self.galaxy_debug)
+            self.browser_box.addLayout(self.galaxy_box)
 
             self.fleet = self.web_engine(self.profile, f"{self.base_url}&component=movement")
             self.fleet.loadFinished.connect(lambda: self.div_middle(self.fleet))
@@ -229,27 +231,104 @@ class MainWindow(QMainWindow):
         webview.page().runJavaScript(js)
     
     def galaxy_scraper(self):
-        self.data = {}
-        self.n_galaxy = 1
-        self.n_system = 1
-        self.max_galaxy = 5
-        self.max_system = 499
-        self.output_file = "galaxy_data.json"
-        js = """
-        const middle = document.getElementById("inhalt");
-        if (middle) {
-            document.body.innerHTML = "";
-            document.body.appendChild(middle.cloneNode(true));
-        }
-        """
-        self.galaxy.page().runJavaScript(js)
+        import browser_cookie3, requests
+        def parse_galaxy_response(text):
+            data = json.loads(text)
+            token = data.get("token")
+            system = data.get("system") or {}
+            galaxy_content = system.get("galaxyContent") or []
+            parsed = {}
+            for row in galaxy_content:
+                pos = row.get("position")
+                if not pos:
+                    continue
+                entry = {}
+                planets = row.get("planets") or []
+                for body in planets:
+                    if not isinstance(body, dict):
+                        continue
+                    ptype = body.get("planetType")
+                    if ptype == 1:
+                        entry["planet"] = {
+                            "name": body.get("planetName"),
+                            "isDestroyed": body.get("isDestroyed", False)
+                        }
+                        entry["player"] = row.get("player").get("playerName")
+                    elif ptype == 2:
+                        res = body.get("resources") or {}
+                        entry["debris"] = {
+                            "requiredShips": body.get("requiredShips"),
+                            "metal": int(res.get("metal", {}).get("amount", 0) or 0),
+                            "crystal": int(res.get("crystal", {}).get("amount", 0) or 0),
+                            "deuterium": int(res.get("deuterium", {}).get("amount", 0) or 0)
+                        }
+                    elif ptype == 3:
+                        entry["moon"] = {
+                            "name": body.get("planetName"),
+                            "isDestroyed": body.get("isDestroyed", False),
+                            "size": body.get("size")
+                        }
+                        entry["player"] = row.get("player").get("playerName")
+                if entry != {}:
+                    parsed[str(pos)] = entry
+            return token, parsed
 
-        # ---------------- TO DO ----------------
-        # ---------------- ESPERAR COMPONENTE GALAXY ----------------
-        # ---------------- INYECTAR JS ----------------
-        # ---------------- LOOP PRINCIPAL ----------------
-        # ---------------- EXTRAER DATA ----------------
-        # ---------------- GUARDAR ----------------
+        def load_ogame_session(profile_path):
+            cj = browser_cookie3.chrome(
+                cookie_file=f"{profile_path}/Cookies",
+                domain_name="ogame.gameforge.com"
+            )
+            session = requests.Session()
+            session.cookies.update(cj)
+            return session
+        
+        session = load_ogame_session("profile_data")
+        session.headers.update({
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "Referer": "https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame&component=galaxy",
+            "Origin": "https://s163-ar.ogame.gameforge.com",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        })
+        r = session.get("https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame")
+        if "component=overview" in r.text:
+            BASE_URL = "https://s163-ar.ogame.gameforge.com/game/index.php"
+            PARAMS = {
+                "page": "ingame",
+                "component": "galaxy",
+                "action": "fetchGalaxyContent",
+                "ajax": "1",
+                "asJson": "1"
+            }
+            data = {}
+            token = None
+            for g in range(1, 6):
+                data[str(g)] = {}
+                for s in range(1, 500):
+                    payload = {
+                        "galaxy": g,
+                        "system": s
+                    }
+                    if token:
+                        payload["token"] = token
+                    r = session.post(BASE_URL, params=PARAMS, data=payload)
+                    token, parsed = parse_galaxy_response(r.text)
+                    if parsed != {}:
+                        data[str(g)][str(s)] = parsed
+                    print(f"✔ G:{g} S:{s}  \r")
+                    if s % 100 == 0:
+                        with open("galaxy_data.json", "w", encoding="utf-8") as f:
+                            json.dump(data, f, indent=2)
+                    time.sleep(0.5)
+                with open("galaxy_data.json", "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+        else:
+            print("NOT logged")
 
     # ====================================================================
     #  CARGAR OTROS PLANETAS
