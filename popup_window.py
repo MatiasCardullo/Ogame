@@ -281,15 +281,15 @@ class PopupWindow(QMainWindow):
 
         self.metal_label.setText(
             f"⚙️ Metal: {cantidad(r['metal'])} <span style='color:#555;'> ({pm})</span> lleno en {tm}<br>"
-            f"{barra_html(r['metal'], r['cap_metal'], '#555')}"
+            f"{barra_html(r['metal'], r['cap_metal'], '#555', 30)}"
         )
         self.crystal_label.setText(
             f"💎 Cristal: {cantidad(r['crystal'])} <span style='color:#aff;'> ({pc})</span> lleno en {tc}<br>"
-            f"{barra_html(r['crystal'], r['cap_crystal'], '#aff')}"
+            f"{barra_html(r['crystal'], r['cap_crystal'], '#aff', 30)}"
         )
         self.deut_label.setText(
             f"🧪 Deuterio: {cantidad(r['deuterium'])} <span style='color:#0f8;'> ({pd})</span> lleno en {td}<br>"
-            f"{barra_html(r['deuterium'], r['cap_deuterium'], '#0f8')}"
+            f"{barra_html(r['deuterium'], r['cap_deuterium'], '#0f8', 30)}"
         )
         self.energy_label.setText(
             f"⚡ Energía: {r['energy']}"
@@ -310,7 +310,11 @@ class PopupWindow(QMainWindow):
         r["crystal"] += r["prod_crystal"] * elapsed
         r["deuterium"] += r["prod_deuterium"] * elapsed
 
-        self.update_resource_labels()
+        try:
+            self.update_resource_labels()
+        except Exception as e:
+            print(f"Increment_resources Error: {e}")
+            
 
     # -------------------------------------------------------------
     # COLAS
@@ -582,7 +586,7 @@ class PopupWindow(QMainWindow):
                 queues_to_remove.append(qid)
 
             color = "#0f0" if progress < 60 else "#ff0" if progress < 90 else "#f00"
-            bar = barra_html(progress, 100, color, 30)
+            bar = barra_html(progress, 100, color, 34)
 
             is_research = (
                 "investig" in label.lower()

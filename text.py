@@ -14,11 +14,14 @@ def tiempo_lleno(cant, cap, prod):
     try:
         if prod <= 0 or cant >= cap:
             return "—"
-        horas = (cap - cant) / (prod * 3600)
-        if horas < 1:
-            return f"{horas*60:.1f}m"
+        t = (cap - cant) / (prod * 3600)
+        if t < 1.6:
+            return f"{int(t*60)} min."
+        elif t >72:
+            return f"{int(t/24)} dias"
+        else:
+            return f"{int(t)} horas"
         
-        return f"{horas:.1f}h"
     except:
         return "—"
 
@@ -46,11 +49,11 @@ def time_str(t):
     
 def produccion(prod):
     if prod > 1:
-        prod_t = f"{prod:+.2f}/s"
+        prod_t = f"{int(prod)}/s"
     elif prod > 1/60:
-        prod_t = f"{prod*60:+.2f}/m"
+        prod_t = f"{int(prod*60)}/m"
     else:
-        prod_t = f"{prod*3600:+.2f}/h"
+        prod_t = f"{int(prod*3600)}/h"
     return prod_t
 
 def cantidad(cant):
@@ -59,5 +62,5 @@ def cantidad(cant):
     elif cant > 1000:
         cant_t = f"{(cant/1000):.2f}k"
     else:
-        cant_t = f"{cant}"
+        cant_t = f"{int(cant)}"
     return cant_t
