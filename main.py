@@ -4,7 +4,7 @@ import sys
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    url = "https://lobby.ogame.gameforge.com/ar_AR/"
+    url = "https://lobby.ogame.gameforge.com/es_AR/accounts"
     window = MainWindow(url=url)
     window.show()
     sys.exit(app.exec())

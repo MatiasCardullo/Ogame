@@ -8,9 +8,10 @@ from sprite_widget import SpriteWidget
 from datetime import timedelta
 import time, os, subprocess, json, sys
 from js_scripts import extract_auction_script
-from text import barra_html, cantidad, produccion, tiempo_lleno, time_str
+from text import barra_html, cantidad, produccion, progress_color, tiempo_lleno, time_str
 
-os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
+logged = False
+#os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
 
 def extract_debris_list(galaxy_data: dict):
     debris_list = []
@@ -61,7 +62,8 @@ class MainWindow(QMainWindow):
         # después de que open_popup termine. El login se coloca dentro de
         # un contenedor junto a un botón para mostrar/ocultar.
         self.login = self.web_engine(profile, url)
-        self.login.loadFinished.connect(self.open_popup)
+        if logged :
+            self.login.loadFinished.connect(self.open_popup)
         self.left_widget = QWidget()
         left_layout = QVBoxLayout()
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -481,13 +483,14 @@ class MainWindow(QMainWindow):
         def format_queue_entry(entry,now):
             """Formato amigable para mostrar una queue"""
             name, time, progress = queue_entry(entry,now)
-            color = "#0f0" if progress < 75 else "#ff0" if progress < 95 else "#f00"
-            barra = barra_html(progress, 100, color, 25)
-            return f"{name} [{progress:.2f}%] ({time})<br>{barra}"
+            color = progress_color(progress)
+            barra = barra_html(progress, 100, color, 21)
+            return f"{name}<br>[{progress:.2f}%] ({time})<br>{barra}"
         
         def format_research_queue_entry(entry,now):
             """Formato amigable para mostrar una queue de Investigacion"""
             name, time, progress = queue_entry(entry,now)
+            color = progress_color(progress, 89)
             color = "#0f0" if progress < 89 else "#ff0" if progress < 95 else "#f00"
             barra = barra_html(progress, 100, color, 50)
             return f"{barra} {name} [{progress:.2f}%] ({time})"
@@ -576,8 +579,8 @@ class MainWindow(QMainWindow):
                 prodInt = r.get(prodkey, 0)
                 prod = produccion(prodInt)
                 full = tiempo_lleno(cant, cap, prodInt)
-                char = "#0f0" if (cant / cap) < 0.9 else "#ff0" if cant < cap else "#f00"
-                barra = barra_html(cant, cap, color, 24) + f"<span style='color:{char};'>{'█'}</span>"
+                char = progress_color((cant / cap) * 100)
+                barra = barra_html(cant, cap, color) + f"<span style='color:{char};'>{'█'}</span>"
                 html += f"<td>{cantidad(cant)} ({prod}) lleno en {full}<br>{barra}</td>"
 
             html += "</tr>"

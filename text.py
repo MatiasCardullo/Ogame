@@ -1,4 +1,4 @@
-def barra_html(cant, cap, color, size=20):
+def barra_html(cant, cap, color, size = 20):
     try:
         if cap <= 0:
             return ""
@@ -64,3 +64,6 @@ def cantidad(cant):
     else:
         cant_t = f"{int(cant)}"
     return cant_t
+
+def progress_color(i = 0, p1 = 75, p2 = 95, color1 = "#0f0", color2 = "#ff0", color3 = "#f00"):
+    return color1 if i < p1 else color2 if i < p2 else color3

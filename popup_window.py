@@ -10,7 +10,7 @@ import time, os, hashlib
 
 from custom_page import CustomWebPage
 from js_scripts import extract_meta_script, extract_resources_script, extract_queue_functions
-from text import barra_html, cantidad, produccion, tiempo_lleno, time_str
+from text import barra_html, cantidad, produccion, progress_color, tiempo_lleno, time_str
 
 
 def make_queue_id(label, name, planet_name, coords, start, end):
@@ -585,7 +585,7 @@ class PopupWindow(QMainWindow):
             if remaining <= 0 and qid:
                 queues_to_remove.append(qid)
 
-            color = "#0f0" if progress < 60 else "#ff0" if progress < 90 else "#f00"
+            color = progress_color(progress, 60, 90)
             bar = barra_html(progress, 100, color, 34)
 
             is_research = (
