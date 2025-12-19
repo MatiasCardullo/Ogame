@@ -1,17 +1,38 @@
-import json
 from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, QPushButton, QSystemTrayIcon
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
 from PyQt6.QtCore import QUrl, QTimer, Qt
 from PyQt6.QtGui import QIcon
-from js_scripts import extract_auction_script
 from custom_page import CustomWebPage
 from sprite_widget import SpriteWidget
 from datetime import timedelta
-import time, os
+import time, os, subprocess, json, sys
+from js_scripts import extract_auction_script
 from text import barra_html, cantidad, produccion, tiempo_lleno, time_str
 
 os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
+
+def extract_debris_list(galaxy_data: dict):
+    debris_list = []
+
+    for g, systems in galaxy_data.items():
+        for s, positions in systems.items():
+            for pos, entry in positions.items():
+                debris = entry.get("debris")
+                if not debris:
+                    continue
+
+                debris_list.append({
+                    "galaxy": int(g),
+                    "system": int(s),
+                    "position": int(pos),
+                    "metal": debris.get("metal", 0),
+                    "crystal": debris.get("crystal", 0),
+                    "deuterium": debris.get("deuterium", 0),
+                    "requiredShips": debris.get("requiredShips")
+                })
+
+    return debris_list
 
 class MainWindow(QMainWindow):
     """Ventana principal de OGame."""
@@ -175,10 +196,10 @@ class MainWindow(QMainWindow):
             self.login.hide()
             self.left_widget.setFixedWidth(55)
             self.toggle_login_btn.setText("Mostrar\nLogin")
-            try:
-                self.create_secondary_views()
-            except Exception as e:
-                print("[DEBUG] Error creando vistas secundarias:", e)
+            #try:
+            self.create_secondary_views()
+            #except Exception as e:
+                #print("[DEBUG] Error creando vistas secundarias:", e)
 
             QTimer.singleShot(1000, self.load_other_planets)
         QTimer.singleShot(3000, lambda: self.login.page().runJavaScript(js, done))
@@ -188,21 +209,41 @@ class MainWindow(QMainWindow):
         if getattr(self, 'secondary_views_created', False):
             return
 
+        self.galaxy_box = QVBoxLayout()
+        self.galaxy_debug = QTextEdit()
+        
+        # Iniciar 5 instancias de worker.py (una para cada galaxia)
+        for galaxy_num in range(1, 6):
+            subprocess.Popen([sys.executable, "worker.py", str(galaxy_num)])
+            self.galaxy_debug.append(f"[Galaxy {galaxy_num}] Proceso iniciado")
+        
+        self.galaxy_box.addWidget(self.galaxy_debug)
+        self.browser_box.addLayout(self.galaxy_box)
+        
+        # Intentar cargar datos si existen
         try:
-            self.galaxy_box = QVBoxLayout()
-            self.galaxy_debug = QTextEdit()
-            self.galaxy_scraper()
-            self.galaxy_box.addWidget(self.galaxy_debug)
-            self.browser_box.addLayout(self.galaxy_box)
-
-            self.fleet = self.web_engine(self.profile, f"{self.base_url}&component=movement")
-            self.fleet.loadFinished.connect(lambda: self.div_middle(self.fleet))
-            self.browser_box.addWidget(self.fleet)
-
-            self.secondary_views_created = True
-            print("[DEBUG] Vistas secundarias creadas: galaxy, fleet")
+            # Combinar datos de todas las galaxias
+            combined_data = {}
+            for g in range(1, 6):
+                galaxy_file = f"galaxy_data_g{g}.json"
+                if os.path.isfile(galaxy_file):
+                    with open(galaxy_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        combined_data.update(data)
+            
+            if combined_data:
+                debris = extract_debris_list(combined_data)
+                debris.sort("requiredShips")
+                print(debris[:5])
         except Exception as e:
-            print("[DEBUG] Error al crear vistas secundarias:", e)
+            print(f"[DEBUG] No se pudieron cargar datos de galaxias: {e}")
+
+        self.fleet = self.web_engine(self.profile, f"{self.base_url}&component=movement")
+        self.fleet.loadFinished.connect(lambda: self.div_middle(self.fleet))
+        self.browser_box.addWidget(self.fleet)
+
+        self.secondary_views_created = True
+        print("[DEBUG] Vistas secundarias creadas: galaxy, fleet")
 
     def toggle_login_visibility(self):
         """Muestra/oculta la vista de login y actualiza el texto del botón."""
@@ -230,106 +271,6 @@ class MainWindow(QMainWindow):
         """
         webview.page().runJavaScript(js)
     
-    def galaxy_scraper(self):
-        import browser_cookie3, requests
-        def parse_galaxy_response(text):
-            data = json.loads(text)
-            token = data.get("token")
-            system = data.get("system") or {}
-            galaxy_content = system.get("galaxyContent") or []
-            parsed = {}
-            for row in galaxy_content:
-                pos = row.get("position")
-                if not pos:
-                    continue
-                entry = {}
-                planets = row.get("planets") or []
-                for body in planets:
-                    if not isinstance(body, dict):
-                        continue
-                    ptype = body.get("planetType")
-                    if ptype == 1:
-                        entry["planet"] = {
-                            "name": body.get("planetName"),
-                            "isDestroyed": body.get("isDestroyed", False)
-                        }
-                        entry["player"] = row.get("player").get("playerName")
-                    elif ptype == 2:
-                        res = body.get("resources") or {}
-                        entry["debris"] = {
-                            "requiredShips": body.get("requiredShips"),
-                            "metal": int(res.get("metal", {}).get("amount", 0) or 0),
-                            "crystal": int(res.get("crystal", {}).get("amount", 0) or 0),
-                            "deuterium": int(res.get("deuterium", {}).get("amount", 0) or 0)
-                        }
-                    elif ptype == 3:
-                        entry["moon"] = {
-                            "name": body.get("planetName"),
-                            "isDestroyed": body.get("isDestroyed", False),
-                            "size": body.get("size")
-                        }
-                        entry["player"] = row.get("player").get("playerName")
-                if entry != {}:
-                    parsed[str(pos)] = entry
-            return token, parsed
-
-        def load_ogame_session(profile_path):
-            cj = browser_cookie3.chrome(
-                cookie_file=f"{profile_path}/Cookies",
-                domain_name="ogame.gameforge.com"
-            )
-            session = requests.Session()
-            session.cookies.update(cj)
-            return session
-        
-        session = load_ogame_session("profile_data")
-        session.headers.update({
-            "X-Requested-With": "XMLHttpRequest",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "Referer": "https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame&component=galaxy",
-            "Origin": "https://s163-ar.ogame.gameforge.com",
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
-        })
-        r = session.get("https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame")
-        if "component=overview" in r.text:
-            BASE_URL = "https://s163-ar.ogame.gameforge.com/game/index.php"
-            PARAMS = {
-                "page": "ingame",
-                "component": "galaxy",
-                "action": "fetchGalaxyContent",
-                "ajax": "1",
-                "asJson": "1"
-            }
-            data = {}
-            token = None
-            for g in range(1, 6):
-                data[str(g)] = {}
-                for s in range(1, 500):
-                    payload = {
-                        "galaxy": g,
-                        "system": s
-                    }
-                    if token:
-                        payload["token"] = token
-                    r = session.post(BASE_URL, params=PARAMS, data=payload)
-                    token, parsed = parse_galaxy_response(r.text)
-                    if parsed != {}:
-                        data[str(g)][str(s)] = parsed
-                    print(f"✔ G:{g} S:{s}  \r")
-                    if s % 100 == 0:
-                        with open("galaxy_data.json", "w", encoding="utf-8") as f:
-                            json.dump(data, f, indent=2)
-                    time.sleep(0.5)
-                with open("galaxy_data.json", "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
-        else:
-            print("NOT logged")
-
     # ====================================================================
     #  CARGAR OTROS PLANETAS
     # ====================================================================
