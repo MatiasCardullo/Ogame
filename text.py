@@ -16,7 +16,7 @@ def tiempo_lleno(cant, cap, prod):
             return "—"
         t = (cap - cant) / (prod * 3600)
         if t < 1.6:
-            return f"{int(t*60)} min."
+            return f"{int(t*60)} minutos"
         elif t >72:
             return f"{int(t/24)} dias"
         else:

@@ -7,7 +7,7 @@ from custom_page import CustomWebPage
 from sprite_widget import SpriteWidget
 from datetime import timedelta
 import time, os, subprocess, json, sys
-from js_scripts import extract_auction_script
+from js_scripts import extract_auction_script, extract_resources_script, extract_queue_functions
 from text import barra_html, cantidad, produccion, progress_color, tiempo_lleno, time_str
 
 logged = False
@@ -160,6 +160,8 @@ class MainWindow(QMainWindow):
 
         self.notified_queues = set()
         self.popups = []
+        
+        self.main_web_queue_memory = {}
 
     def web_engine(self, profile, url):
         web = QWebEngineView()
@@ -202,9 +204,7 @@ class MainWindow(QMainWindow):
         """Maneja metadata del planeta en main_web."""
         if not data:
             return
-        
-        from js_scripts import extract_resources_script, extract_queue_functions
-        
+                
         player = data.get('ogame-player-name', '—')
         universe = data.get('ogame-universe-name', '—')
         coords = data.get('ogame-planet-coordinates', '—')
@@ -293,8 +293,6 @@ class MainWindow(QMainWindow):
                 )
                 return
             
-            from js_scripts import extract_queue_functions
-            
             parts = []
             if det.get('building'):
                 parts.append("extract_building()")
@@ -341,15 +339,14 @@ class MainWindow(QMainWindow):
         """Maneja colas del planeta en main_web."""
         import hashlib
         
-        if not data or not isinstance(data, dict):
-            queues_list = []
-        else:
+        now = int(time.time())
+        planet_name = getattr(self, 'current_main_web_planet', 'Unknown')
+        coords = getattr(self, 'current_main_web_coords', '0:0:0')
+        
+        # Procesar colas del DOM actual
+        if data and isinstance(data, dict):
             queues_data = data.get('queues', []) or []
-            now = int(time.time())
-            planet_name = getattr(self, 'current_main_web_planet', 'Unknown')
-            coords = getattr(self, 'current_main_web_coords', '0:0:0')
             
-            queues_list = []
             for q in queues_data:
                 label = q.get("label", "")
                 name = q.get("name", "")
@@ -372,7 +369,8 @@ class MainWindow(QMainWindow):
                 
                 qid = hashlib.sha1(key_raw.encode("utf-8")).hexdigest()
                 
-                queues_list.append({
+                # Guardar en memory
+                self.main_web_queue_memory[qid] = {
                     "id": qid,
                     "label": label,
                     "name": name,
@@ -381,11 +379,19 @@ class MainWindow(QMainWindow):
                     "end": end,
                     "planet_name": planet_for_store,
                     "coords": coords_for_store
-                })
+                }
+        
+        # Filtrar colas de memory para este planeta (incluyendo GLOBAL)
+        queues_list = [
+            q for q in self.main_web_queue_memory.values()
+            if (q.get("planet_name") == planet_name and q.get("coords") == coords) or 
+               q.get("planet_name") == "GLOBAL"
+        ]
+        queues_list.sort(key=lambda q: q.get("end", now))
         
         self.update_planet_data(
-            planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
-            coords=getattr(self, 'current_main_web_coords', '0:0:0'),
+            planet_name=planet_name,
+            coords=coords,
             resources=resources,
             queues=queues_list
         )
@@ -727,7 +733,7 @@ class MainWindow(QMainWindow):
             """Formato amigable para mostrar una queue"""
             name, time, progress = queue_entry(entry,now)
             color = progress_color(progress)
-            barra = barra_html(progress, 100, color, 21)
+            barra = barra_html(progress, 100, color)
             aux = f"{name} [{int(progress)}%] ({time})"
             if len(aux) > 40:
                 return f"{name}<br>[{int(progress)}%] ({time})<br>{barra}"
@@ -824,11 +830,13 @@ class MainWindow(QMainWindow):
                 cant = r.get(rkey, 0)
                 cap = r.get(capkey, 1)
                 prodInt = r.get(prodkey, 0)
-                prod = produccion(prodInt)
-                full = tiempo_lleno(cant, cap, prodInt)
+                if cant < cap:
+                    full = f"({produccion(prodInt)}) lleno en {tiempo_lleno(cant, cap, prodInt)}"
+                else:
+                    full = f" - almacenes llenos!!!"
                 char = progress_color((cant / cap) * 100)
-                barra = barra_html(cant, cap, color) + f"<span style='color:{char};'>{'█'}</span>"
-                html += f"<td>{cantidad(cant)} ({prod}) lleno en {full}<br>{barra}</td>"
+                barra = barra_html(cant, cap, color, 19) + f"<span style='color:{char};'>{'█'}</span>"
+                html += f"<td>{cantidad(cant)} {full}<br>{barra}</td>"
 
             html += "</tr>"
 
@@ -944,9 +952,7 @@ class MainWindow(QMainWindow):
             self.refresh_main_panel()
         except Exception as e:
             print("[DEBUG] Error updated_planet_data:", e)
-
-        
-
+    
     # ====================================================================
     #  Incremento pasivo
     # ====================================================================
