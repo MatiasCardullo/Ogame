@@ -9,8 +9,12 @@ class CustomWebPage(QWebEnginePage):
         self.main_window = main_window
 
     def createWindow(self, _type):
-        """Crea una nueva ventana emergente usando la clase del main_window."""
-        # Importar localmente (solo cuando se necesita) para evitar import circular
+        """Carga en main_web en lugar de crear una ventana emergente."""
+        # En lugar de abrir un popup, cargar en main_web si existe
+        if self.main_window and hasattr(self.main_window, 'main_web'):
+            return self.main_window.main_web.page()
+        
+        # Fallback: crear un popup si no existe main_web
         from popup_window import PopupWindow
 
         popup = PopupWindow(profile=self.profile(), main_window=self.main_window)

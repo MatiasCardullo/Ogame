@@ -63,7 +63,7 @@ class MainWindow(QMainWindow):
         # un contenedor junto a un botón para mostrar/ocultar.
         self.login = self.web_engine(profile, url)
         if logged :
-            self.login.loadFinished.connect(self.open_popup)
+            self.login.loadFinished.connect(self.on_open)
         self.left_widget = QWidget()
         left_layout = QVBoxLayout()
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -93,10 +93,31 @@ class MainWindow(QMainWindow):
         self._notif_label = QLabel("")
         self._notif_label.setStyleSheet("color: #0f0; font-weight: bold; padding: 8px;")
         main_layout.addWidget(self._notif_label)
+        
+        # Contenedor horizontal para sprite_widget + QWebEngineView
+        top_container = QWidget()
+        top_layout = QHBoxLayout()
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(5)
+        
         self.sprite_widget = SpriteWidget()
-        main_layout.addWidget(self.sprite_widget)
-        self.main_label = QLabel("🪐 Panel Principal de Planetas (en desarrollo)")
-        main_layout.addWidget(self.main_label)
+        top_layout.addWidget(self.sprite_widget, 1)  # stretch factor = 1 para que ocupe espacio disponible
+        
+        # QWebEngineView integrado (el navegador del planeta actual)
+        self.main_web = self.web_engine(self.profile, self.base_url)
+        self.main_web.setZoomFactor(0.8)
+        self.main_web.setMinimumWidth(800)
+        top_layout.addWidget(self.main_web)
+        
+        # Configurar extracción de datos en main_web
+        self.setup_main_web_extraction()
+        
+        top_container.setLayout(top_layout)
+        main_layout.addWidget(top_container)
+        
+        self.main_label = QTextEdit()
+        self.main_label.setReadOnly(True)
+        main_layout.addWidget(self.main_label, 1)  # stretch factor = 1
         self.tabs.addTab(self.main_panel, "📊 Panel Principal")
 
         # ----- Subasta -----
@@ -147,6 +168,228 @@ class MainWindow(QMainWindow):
         web.load(QUrl(url))
         return web
 
+    def setup_main_web_extraction(self):
+        """Configura main_web para extraer datos automáticamente cuando carga una página."""
+        if not hasattr(self, 'main_web'):
+            return
+        
+        self.main_web.loadFinished.connect(self.on_main_web_loaded)
+
+    def on_main_web_loaded(self):
+        """Cuando main_web carga una página, extrae datos si estamos en el juego."""
+        from js_scripts import extract_meta_script, extract_resources_script
+        
+        # Detectar si estamos en el juego
+        script = """
+            (function() {
+                const metas = document.getElementsByTagName('meta');
+                for (let m of metas) {
+                    if (m.name && m.name.startsWith('ogame-player-name')) 
+                        return true;
+                }
+                return false;
+            })();
+        """
+        
+        def check_ingame(is_ingame):
+            if is_ingame:
+                # Extraer metadata
+                self.main_web.page().runJavaScript(extract_meta_script, self.handle_main_web_meta)
+        
+        self.main_web.page().runJavaScript(script, check_ingame)
+
+    def handle_main_web_meta(self, data):
+        """Maneja metadata del planeta en main_web."""
+        if not data:
+            return
+        
+        from js_scripts import extract_resources_script, extract_queue_functions
+        
+        player = data.get('ogame-player-name', '—')
+        universe = data.get('ogame-universe-name', '—')
+        coords = data.get('ogame-planet-coordinates', '—')
+        planet = data.get('ogame-planet-name', '—')
+        
+        self.current_main_web_planet = planet
+        self.current_main_web_coords = coords
+        
+        # Extraer recursos
+        self.main_web.page().runJavaScript(extract_resources_script, self.handle_main_web_resources)
+
+    def handle_main_web_resources(self, data):
+        """Maneja recursos del planeta en main_web."""
+        if not data:
+            return
+        
+        resources = {
+            "metal": data.get("metal", 0),
+            "crystal": data.get("crystal", 0),
+            "deuterium": data.get("deuterium", 0),
+            "energy": data.get("energy", 0),
+            "prod_metal": data.get("prod_metal", 0),
+            "prod_crystal": data.get("prod_crystal", 0),
+            "prod_deuterium": data.get("prod_deuterium", 0),
+            "cap_metal": data.get("capacity_metal", 0),
+            "cap_crystal": data.get("capacity_crystal", 0),
+            "cap_deuterium": data.get("capacity_deuterium", 0),
+            "last_update": time.time()
+        }
+        
+        # Extraer colas
+        detect_script = """
+            (function() {
+                return {
+                    building_present: !!document.querySelector('#productionboxbuildingcomponent'),
+                    building: !!document.querySelector('#productionboxbuildingcomponent .construction.active'),
+                    research_present: !!document.querySelector('#productionboxresearchcomponent'),
+                    research: !!document.querySelector('#productionboxresearchcomponent .construction.active'),
+                    lf_building_present: !!document.querySelector('#productionboxlfbuildingcomponent'),
+                    lf_building: !!document.querySelector('#productionboxlfbuildingcomponent .construction.active'),
+                    lf_research_present: !!document.querySelector('#productionboxlfresearchcomponent'),
+                    lf_research: !!document.querySelector('#productionboxlfresearchcomponent .construction.active'),
+                    shipyard_present: !!document.querySelector('#productionboxshipyardcomponent'),
+                    shipyard: !!document.querySelector('#productionboxshipyardcomponent .construction.active')
+                };
+            })();
+        """
+        
+        def after_detect(det):
+            if not det:
+                self.update_planet_data(
+                    planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
+                    coords=getattr(self, 'current_main_web_coords', '0:0:0'),
+                    resources=resources,
+                    queues=[]
+                )
+                return
+            
+            present_flags = (
+                det.get('building_present') or det.get('research_present') or 
+                det.get('lf_building_present') or det.get('lf_research_present') or 
+                det.get('shipyard_present')
+            )
+            
+            if not present_flags:
+                self.update_planet_data(
+                    planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
+                    coords=getattr(self, 'current_main_web_coords', '0:0:0'),
+                    resources=resources,
+                    queues=[]
+                )
+                return
+            
+            active_flags = (
+                det.get('building') or det.get('research') or 
+                det.get('lf_building') or det.get('lf_research') or 
+                det.get('shipyard')
+            )
+            
+            if not active_flags:
+                self.update_planet_data(
+                    planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
+                    coords=getattr(self, 'current_main_web_coords', '0:0:0'),
+                    resources=resources,
+                    queues=[]
+                )
+                return
+            
+            from js_scripts import extract_queue_functions
+            
+            parts = []
+            if det.get('building'):
+                parts.append("extract_building()")
+            if det.get('research'):
+                parts.append("extract_research()")
+            if det.get('lf_building'):
+                parts.append("extract_lf_building()")
+            if det.get('lf_research'):
+                parts.append("extract_lf_research()")
+            if det.get('shipyard'):
+                parts.append("extract_shipyard()")
+            
+            if not parts:
+                self.update_planet_data(
+                    planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
+                    coords=getattr(self, 'current_main_web_coords', '0:0:0'),
+                    resources=resources,
+                    queues=[]
+                )
+                return
+            
+            present_js = (
+                f"let present = {{building: {str(det.get('building_present')).lower()}, "
+                f"research: {str(det.get('research_present')).lower()}, "
+                f"lf_building: {str(det.get('lf_building_present')).lower()}, "
+                f"lf_research: {str(det.get('lf_research_present')).lower()}, "
+                f"shipyard: {str(det.get('shipyard_present')).lower()}}};"
+            )
+            
+            dynamic_script = f"""
+                (function() {{
+                    {present_js}
+                    let final = [];
+                    {extract_queue_functions}
+                    return {{ present: present, queues: final.concat({",".join(parts)}) }};
+                }})();
+            """
+            
+            self.main_web.page().runJavaScript(dynamic_script, lambda queues_data: self.handle_main_web_queues(queues_data, resources))
+        
+        self.main_web.page().runJavaScript(detect_script, after_detect)
+
+    def handle_main_web_queues(self, data, resources):
+        """Maneja colas del planeta en main_web."""
+        import hashlib
+        
+        if not data or not isinstance(data, dict):
+            queues_list = []
+        else:
+            queues_data = data.get('queues', []) or []
+            now = int(time.time())
+            planet_name = getattr(self, 'current_main_web_planet', 'Unknown')
+            coords = getattr(self, 'current_main_web_coords', '0:0:0')
+            
+            queues_list = []
+            for q in queues_data:
+                label = q.get("label", "")
+                name = q.get("name", "")
+                level = q.get("level", "")
+                start = int(q.get("start", now))
+                end = int(q.get("end", now))
+                
+                is_research = (
+                    "investig" in label.lower() or "research" in label.lower() or "🧬" in label
+                )
+                
+                if is_research:
+                    key_raw = f"{label}|{name}|GLOBAL|{start}|{end}"
+                    planet_for_store = 'GLOBAL'
+                    coords_for_store = 'GLOBAL'
+                else:
+                    key_raw = f"{label}|{name}|{planet_name}|{coords}|{start}|{end}"
+                    planet_for_store = planet_name
+                    coords_for_store = coords
+                
+                qid = hashlib.sha1(key_raw.encode("utf-8")).hexdigest()
+                
+                queues_list.append({
+                    "id": qid,
+                    "label": label,
+                    "name": name,
+                    "level": level,
+                    "start": start,
+                    "end": end,
+                    "planet_name": planet_for_store,
+                    "coords": coords_for_store
+                })
+        
+        self.update_planet_data(
+            planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
+            coords=getattr(self, 'current_main_web_coords', '0:0:0'),
+            resources=resources,
+            queues=queues_list
+        )
+
     def _get_planet_key(self, planet_name, coords):
         """Genera una clave única para un planeta basada en nombre y coordenadas.
         Esto evita que planetas con el mismo nombre pero diferentes coordenadas se sobrescriban.
@@ -155,7 +398,7 @@ class MainWindow(QMainWindow):
             coords = "0:0:0"
         return f"{planet_name}|{coords}"
 
-    def open_popup(self):
+    def on_open(self):
         self.showMaximized()
         js = """
         (async function() {
@@ -485,7 +728,11 @@ class MainWindow(QMainWindow):
             name, time, progress = queue_entry(entry,now)
             color = progress_color(progress)
             barra = barra_html(progress, 100, color, 21)
-            return f"{name}<br>[{progress:.2f}%] ({time})<br>{barra}"
+            aux = f"{name} [{int(progress)}%] ({time})"
+            if len(aux) > 40:
+                return f"{name}<br>[{int(progress)}%] ({time})<br>{barra}"
+            else:
+                return f"{aux}<br>{barra}"
         
         def format_research_queue_entry(entry,now):
             """Formato amigable para mostrar una queue de Investigacion"""
@@ -628,11 +875,9 @@ class MainWindow(QMainWindow):
                 html += "</td>"
 
             html += "</tr>"
-
         html += "</table>"
 
-        self.main_label.setTextFormat(Qt.TextFormat.RichText)
-        self.main_label.setText(html)
+        self.main_label.setHtml(html)
 
     # ====================================================================
     #  UPDATE PLANET DATA (API nueva con queues que incluyen id)
@@ -695,7 +940,12 @@ class MainWindow(QMainWindow):
         self.planets_data[planet_key] = pdata
 
         # Refrescar UI
-        self.refresh_main_panel()
+        try:
+            self.refresh_main_panel()
+        except Exception as e:
+            print("[DEBUG] Error updated_planet_data:", e)
+
+        
 
     # ====================================================================
     #  Incremento pasivo
