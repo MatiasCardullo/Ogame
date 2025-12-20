@@ -1,4 +1,7 @@
-from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, QPushButton, QSystemTrayIcon
+from PyQt6.QtWidgets import (
+    QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
+    QFileDialog, QLabel, QTextEdit, QPushButton, QSystemTrayIcon
+)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
 from PyQt6.QtCore import QUrl, QTimer, Qt
@@ -7,10 +10,13 @@ from custom_page import CustomWebPage
 from sprite_widget import SpriteWidget
 from datetime import timedelta
 import time, os, subprocess, json, sys
-from js_scripts import extract_auction_script, extract_resources_script, extract_queue_functions
+from js_scripts import (
+    in_game, extract_meta_script, extract_resources_script,
+    extract_queue_functions, extract_auction_script
+)
 from text import barra_html, cantidad, produccion, progress_color, tiempo_lleno, time_str
 
-logged = False
+logged = True
 #os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
 
 def extract_debris_list(galaxy_data: dict):
@@ -90,9 +96,6 @@ class MainWindow(QMainWindow):
         self.main_panel.setLayout(main_layout)
 
         # Panel Principal
-        self._notif_label = QLabel("")
-        self._notif_label.setStyleSheet("color: #0f0; font-weight: bold; padding: 8px;")
-        main_layout.addWidget(self._notif_label)
         
         # Contenedor horizontal para sprite_widget + QWebEngineView
         top_container = QWidget()
@@ -104,11 +107,20 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self.sprite_widget, 1)  # stretch factor = 1 para que ocupe espacio disponible
         
         # QWebEngineView integrado (el navegador del planeta actual)
+        self.web_layout = QVBoxLayout()
         self.main_web = self.web_engine(self.profile, self.base_url)
-        self.main_web.setZoomFactor(0.8)
+        self.main_web.setZoomFactor(0.7)
         self.main_web.setMinimumWidth(800)
-        top_layout.addWidget(self.main_web)
-        
+        self.toolbar = QHBoxLayout()
+        for text, func in [("<", self.main_web.back), (">", self.main_web.forward), ("↻", self.main_web.reload), ("💾", self.save_html)]:
+            btn = QPushButton(text)
+            btn.setBaseSize(20, 20)
+            btn.clicked.connect(func)
+            self.toolbar.addWidget(btn)
+        self.web_layout.addLayout(self.toolbar)
+        self.web_layout.addWidget(self.main_web)
+        top_layout.addLayout(self.web_layout)
+                
         # Configurar extracción de datos en main_web
         self.setup_main_web_extraction()
         
@@ -118,6 +130,11 @@ class MainWindow(QMainWindow):
         self.main_label = QTextEdit()
         self.main_label.setReadOnly(True)
         main_layout.addWidget(self.main_label, 1)  # stretch factor = 1
+
+        self._notif_label = QLabel("")
+        self._notif_label.setStyleSheet("color: #0f0; font-weight: bold; padding: 8px;")
+        main_layout.addWidget(self._notif_label)
+        
         self.tabs.addTab(self.main_panel, "📊 Panel Principal")
 
         # ----- Subasta -----
@@ -179,27 +196,21 @@ class MainWindow(QMainWindow):
 
     def on_main_web_loaded(self):
         """Cuando main_web carga una página, extrae datos si estamos en el juego."""
-        from js_scripts import extract_meta_script, extract_resources_script
-        
-        # Detectar si estamos en el juego
-        script = """
-            (function() {
-                const metas = document.getElementsByTagName('meta');
-                for (let m of metas) {
-                    if (m.name && m.name.startsWith('ogame-player-name')) 
-                        return true;
-                }
-                return false;
-            })();
-        """
-        
         def check_ingame(is_ingame):
             if is_ingame:
                 # Extraer metadata
                 self.main_web.page().runJavaScript(extract_meta_script, self.handle_main_web_meta)
         
-        self.main_web.page().runJavaScript(script, check_ingame)
+        self.main_web.page().runJavaScript(in_game, check_ingame)
 
+    def save_html(self):
+            def handle_html(html):
+                path, _ = QFileDialog.getSaveFileName(self, "Guardar HTML", "pagina.html", "Archivos HTML (*.html)")
+                if path:
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(html)
+            self.main_web.page().toHtml(handle_html)
+    
     def handle_main_web_meta(self, data):
         """Maneja metadata del planeta en main_web."""
         if not data:
@@ -315,11 +326,13 @@ class MainWindow(QMainWindow):
                 return
             
             present_js = (
-                f"let present = {{building: {str(det.get('building_present')).lower()}, "
-                f"research: {str(det.get('research_present')).lower()}, "
-                f"lf_building: {str(det.get('lf_building_present')).lower()}, "
-                f"lf_research: {str(det.get('lf_research_present')).lower()}, "
-                f"shipyard: {str(det.get('shipyard_present')).lower()}}};"
+                f"""let present = {{
+                    building: {str(det.get('building_present')).lower()},
+                    research: {str(det.get('research_present')).lower()},
+                    lf_building: {str(det.get('lf_building_present')).lower()},
+                    lf_research: {str(det.get('lf_research_present')).lower()},
+                    shipyard: {str(det.get('shipyard_present')).lower()}
+                }};"""
             )
             
             dynamic_script = f"""
@@ -328,8 +341,7 @@ class MainWindow(QMainWindow):
                     let final = [];
                     {extract_queue_functions}
                     return {{ present: present, queues: final.concat({",".join(parts)}) }};
-                }})();
-            """
+                }})();"""
             
             self.main_web.page().runJavaScript(dynamic_script, lambda queues_data: self.handle_main_web_queues(queues_data, resources))
         
@@ -526,7 +538,7 @@ class MainWindow(QMainWindow):
     #  CARGAR OTROS PLANETAS
     # ====================================================================
     def load_other_planets(self):
-        """Busca los enlaces de otros planetas en el sidebar y los carga secuencialmente."""
+        """Busca los enlaces de otros planetas en main_web y los carga secuencialmente."""
         script = """
         (function() {
             console.log("[DEBUG JS] Buscando planetList...");
@@ -599,95 +611,42 @@ class MainWindow(QMainWindow):
             self.current_planet_index = 0
             self.load_next_planet()
         
-        # Ejecutar el script en el popup si existe (el sidebar está ahí),
-        # si no, caer back al web principal.
-        target_page = None
-        popup = None
-        if hasattr(self, 'popups') and self.popups:
-            try:
-                popup = self.popups[-1]
-                print("[DEBUG] Hay popup(s) abierto(s). Esperando sidebar en popup si es necesario...")
-            except Exception as e:
-                print("[DEBUG] Error accediendo popup list:", e)
-
-        def run_detection_on(page, description):
-            try:
-                print(f"[DEBUG] Ejecutando búsqueda de planetList en: {description}")
-                page.runJavaScript(script, handle_planets)
-            except Exception as e:
-                print("[DEBUG] Error ejecutando script de planetList:", e)
-
-        # Si tenemos popup, esperar a que tenga sidebar visible (has_sidebar)
-        if popup is not None:
-            def wait_for_sidebar(attempts=0):
-                try:
-                    if getattr(popup, 'has_sidebar', False):
-                        run_detection_on(popup.web.page(), 'popup')
-                        return
-                except Exception as e:
-                    print("[DEBUG] Error leyendo popup.has_sidebar:", e)
-
-                if attempts >= 20:  # ~10s timeout (20 * 500ms)
-                    print("[DEBUG] Timeout esperando sidebar en popup, fallback a web principal")
-                    run_detection_on(self.login.page(), 'web principal (fallback)')
-                    return
-
-                # volver a intentar en 500ms
-                QTimer.singleShot(500, lambda: wait_for_sidebar(attempts + 1))
-
-            wait_for_sidebar(0)
-        else:
-            run_detection_on(self.login.page(), 'web principal')
+        # Ejecutar el script en main_web
+        try:
+            print("[DEBUG] Ejecutando búsqueda de planetList en main_web")
+            self.main_web.page().runJavaScript(script, handle_planets)
+        except Exception as e:
+            print("[DEBUG] Error ejecutando script de planetList:", e)
 
     def load_next_planet(self):
-        """Carga el siguiente planeta de la lista."""
+        """Carga el siguiente planeta de la lista usando main_web."""
         if not hasattr(self, 'planets_to_load') or self.current_planet_index >= len(self.planets_to_load):
             print("[DEBUG] ✓ Todos los planetas cargados")
             return
         
         planet = self.planets_to_load[self.current_planet_index]
-        print(f"[DEBUG] Cargando planeta {self.current_planet_index + 1}/{len(self.planets_to_load)}: {planet['name']}")
-        # Crear un PopupWindow (que contiene la lógica para extraer recursos/colas)
-        # Reutilizar el popup existente (el sidebar) en lugar de abrir nuevas ventanas
-        popup = None
-        if hasattr(self, 'popups') and self.popups:
-            popup = self.popups[-1]
-
-        if not popup:
-            # Si no hay popup disponible, avanzar para no bloquear
-            print('[DEBUG] No hay popup disponible para recargar, saltando...')
-            self.current_planet_index += 1
-            QTimer.singleShot(500, self.load_next_planet)
-            return
+        print(f"[DEBUG] Cargando planeta {self.current_planet_index + 1}/{len(self.planets_to_load)}: {planet['name']} en main_web")
 
         def finish_and_next():
-            try:
-                # Forzar extracción final desde el popup
-                try:
-                    popup.update_resources()
-                except Exception:
-                    pass
-                try:
-                    popup.update_queues()
-                except Exception:
-                    pass
-            finally:
-                QTimer.singleShot(500, self.load_next_planet)
+            """Termina la extracción actual y pasa al siguiente planeta."""
+            QTimer.singleShot(500, self.load_next_planet)
 
         def on_load_finished(ok=True):
+            """Callback cuando termina de cargar la página del planeta."""
             try:
                 # desconectar este handler para evitar llamadas múltiples
-                popup.web.loadFinished.disconnect(on_load_finished)
+                self.main_web.loadFinished.disconnect(on_load_finished)
             except Exception:
                 pass
-            print(f"[DEBUG] Página de {planet['name']} recargada en popup, esperando datos...")
+            print(f"[DEBUG] Página de {planet['name']} cargada en main_web, esperando datos...")
+            # Los datos se extraerán automáticamente vía on_main_web_loaded y los handlers
             QTimer.singleShot(1200, finish_and_next)
 
         try:
-            popup.web.loadFinished.connect(on_load_finished)
-            popup.web.load(QUrl(planet['url']))
+            self.main_web.loadFinished.connect(on_load_finished)
+            self.main_web.load(QUrl(planet['url']))
         except Exception as e:
-            print('[DEBUG] Error recargando popup:', e)
+            print('[DEBUG] Error cargando planeta en main_web:', e)
             QTimer.singleShot(1000, finish_and_next)
 
         # avanzar índice inmediatamente
@@ -1092,6 +1051,6 @@ class MainWindow(QMainWindow):
 
         try:
             self._notif_label.setText(f"🔔 {title}: {message}")
-            QTimer.singleShot(8000, lambda: self._notif_label.setText(""))
+            #QTimer.singleShot(8000, lambda: self._notif_label.setText(""))
         except Exception as e:
             print("[DEBUG] Error al mostrar notificación:", e)

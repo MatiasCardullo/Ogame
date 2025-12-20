@@ -1,3 +1,15 @@
+# Detectar si estamos en el juego
+in_game = """
+    (function() {
+        const metas = document.getElementsByTagName('meta');
+        for (let m of metas) {
+            if (m.name && m.name.startsWith('ogame-player-name')) 
+                return true;
+        }
+        return false;
+    })();
+"""
+
 # --- Extrae metadatos del jugador / planeta ---
 extract_meta_script = """
 (function() {
