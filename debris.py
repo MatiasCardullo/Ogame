@@ -1,35 +1,35 @@
 import json, os, sys
 
-def extract_debris_list(galaxy_data: dict):
+def extract_debris_list(galaxy_data: dict, g):
     normal_debris = []
     expedition_debris = []
 
-    for g, systems in galaxy_data.items():
-        for s, positions in systems.items():
-            for pos, entry in positions.items():
-                debris = entry.get("debris")
-                if not debris:
-                    continue
-                
-                if int(pos) == 16:
-                    expedition_debris.append({
-                        "galaxy": int(g),
-                        "system": int(s),
-                        "metal": debris.get("metal", 0),
-                        "crystal": debris.get("crystal", 0),
-                        "deuterium": debris.get("deuterium", 0),
-                        "requiredShips": debris.get("requiredShips")
-                    })
-                else:
-                    normal_debris.append({
-                        "galaxy": int(g),
-                        "system": int(s),
-                        "position": int(pos),
-                        "metal": debris.get("metal", 0),
-                        "crystal": debris.get("crystal", 0),
-                        "deuterium": debris.get("deuterium", 0),
-                        "requiredShips": debris.get("requiredShips")
-                    })
+    systems = galaxy_data[str(g)]
+    for s, positions in systems.items():
+        for pos, entry in positions.items():
+            debris = entry.get("debris")
+            if not debris:
+                continue
+            
+            if int(pos) == 16:
+                expedition_debris.append({
+                    "galaxy": g,
+                    "system": int(s),
+                    "metal": debris.get("metal", 0),
+                    "crystal": debris.get("crystal", 0),
+                    "deuterium": debris.get("deuterium", 0),
+                    "requiredShips": debris.get("requiredShips")
+                })
+            else:
+                normal_debris.append({
+                    "galaxy": g,
+                    "system": int(s),
+                    "position": int(pos),
+                    "metal": debris.get("metal", 0),
+                    "crystal": debris.get("crystal", 0),
+                    "deuterium": debris.get("deuterium", 0),
+                    "requiredShips": debris.get("requiredShips")
+                })
 
     return normal_debris, expedition_debris
 
@@ -51,7 +51,7 @@ def main():
     with open(f"galaxy_data_g{galaxy}.json", "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    normal, exp = extract_debris_list(data)
+    normal, exp = extract_debris_list(data, galaxy)
 
     normal.sort(key=lambda x: x["requiredShips"], reverse=True)
     exp.sort(key=lambda x: x["requiredShips"], reverse=True)

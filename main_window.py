@@ -62,7 +62,7 @@ class MainWindow(QMainWindow):
         # ----- Tab navegador -----
         self.browser_tab = QWidget()
         self.browser_box = QHBoxLayout()
-        self.base_url = "https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame"
+        self.base_url = "https://s163-ar.ogame.gameforge.com/game/index.php"
 
         # Login: se muestra inicialmente, pero lo ocultaremos automáticamente
         # después de que open_popup termine. El login se coloca dentro de
@@ -599,24 +599,53 @@ class MainWindow(QMainWindow):
         })();
         """
         
-        def handle_planets(planets):
-            print(f"[DEBUG] Resultado del script: {planets}")
-            if not planets or not isinstance(planets, list):
-                print("[DEBUG] ⚠️  No se encontraron planetas adicionales")
+        def retry_load_other_planets(attempt):
+            """Reintentar búsqueda de planetas con delay."""
+            max_attempts = 10
+            delay_ms = 500
+            
+            if attempt > max_attempts:
+                print(f"[DEBUG] ⚠️  No se encontraron planetas después de {max_attempts} intentos")
                 return
             
-            print(f"[DEBUG] ✓ Encontrados {len(planets)} planetas: {[p['name'] for p in planets]}")
-            # Almacenar la lista y empezar a cargar
-            self.planets_to_load = planets
-            self.current_planet_index = 0
-            self.load_next_planet()
+            print(f"[DEBUG] Reintentando búsqueda de planetList (intento {attempt}/{max_attempts})...")
+            
+            def handle_retry(planets):
+                if planets and isinstance(planets, list):
+                    print(f"[DEBUG] ✓ Encontrados {len(planets)} planetas en intento {attempt}: {[p['name'] for p in planets]}")
+                    self.planets_to_load = planets
+                    self.current_planet_index = 0
+                    self.load_next_planet()
+                else:
+                    # Reintentar
+                    QTimer.singleShot(delay_ms, lambda: retry_load_other_planets(attempt + 1))
+            
+            try:
+                self.main_web.page().runJavaScript(script, handle_retry)
+            except Exception as e:
+                print(f"[DEBUG] Error ejecutando script (intento {attempt}):", e)
+                QTimer.singleShot(delay_ms, lambda: retry_load_other_planets(attempt + 1))
+        
+        def handle_planets(planets):
+            print(f"[DEBUG] Resultado del script: {planets}")
+            if planets and isinstance(planets, list):
+                print(f"[DEBUG] ✓ Encontrados {len(planets)} planetas: {[p['name'] for p in planets]}")
+                # Almacenar la lista y empezar a cargar
+                self.planets_to_load = planets
+                self.current_planet_index = 0
+                self.load_next_planet()
+                return
+            
+            # Si no encontramos, reintentar
+            retry_load_other_planets(1)
         
         # Ejecutar el script en main_web
         try:
-            print("[DEBUG] Ejecutando búsqueda de planetList en main_web")
+            print("[DEBUG] Ejecutando búsqueda de planetList en main_web (intento 1)...")
             self.main_web.page().runJavaScript(script, handle_planets)
         except Exception as e:
             print("[DEBUG] Error ejecutando script de planetList:", e)
+            retry_load_other_planets(2)
 
     def load_next_planet(self):
         """Carga el siguiente planeta de la lista usando main_web."""
@@ -655,7 +684,6 @@ class MainWindow(QMainWindow):
     # ====================================================================
     #  PANEL PRINCIPAL
     # ====================================================================
-
     def refresh_main_panel(self):
         html = """
         <style>

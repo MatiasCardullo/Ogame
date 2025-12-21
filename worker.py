@@ -110,16 +110,15 @@ class GalaxyWorker:
         data[str(g)] = {}
         for s in range(1, 500):
             payload = {"galaxy": g, "system": s}
-            if token:
-                payload["token"] = token
+            #if token:
+                #payload["token"] = token
             r = session.post(BASE_URL, params=PARAMS, data=payload)
             token, parsed = parse_galaxy_response(r.text)
             print(f"G:{g} S:{s}")
             if parsed:
                 data[str(g)][str(s)] = parsed
-                if(token):
-                    time.sleep(0.3)
-        
+                time.sleep(0.5)
+        data["time"] = time.time()
         # Guardar en archivo específico para esta galaxia
         output_file = f"galaxy_data_g{g}.json"
         with open(output_file, "w", encoding="utf-8") as f:
