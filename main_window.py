@@ -15,6 +15,7 @@ from js_scripts import (
     extract_queue_functions, extract_auction_script, extract_planet_array
 )
 from text import barra_html, cantidad, produccion, progress_color, tiempo_lleno, time_str
+from worker import FleetWorker
 
 logged = True
 #os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
@@ -166,19 +167,29 @@ class MainWindow(QMainWindow):
 
         # Timers
         self.timer_global = QTimer(self)
-        self.timer_global.setInterval(1000)
+        self.timer_global.setInterval(60000)
         self.timer_global.timeout.connect(self.increment_all_planets)
         self.timer_global.start()
 
         self.queue_timer = QTimer(self)
-        self.queue_timer.setInterval(1000)
+        self.queue_timer.setInterval(60000)
         self.queue_timer.timeout.connect(self.check_queues)
         self.queue_timer.start()
+
+        # Fleet update timer (every 30 seconds)
+        self.fleet_timer = QTimer(self)
+        self.fleet_timer.setInterval(30000)
+        self.fleet_timer.timeout.connect(self.update_fleets)
+        self.fleet_timer.start()
 
         self.notified_queues = set()
         self.popups = []
         
         self.main_web_queue_memory = {}
+        
+        # Fleet data storage
+        self.fleets_data = []
+        self.last_fleet_update = 0
 
     def web_engine(self, profile, url):
         web = QWebEngineView()
@@ -473,6 +484,8 @@ class MainWindow(QMainWindow):
                 #print("[DEBUG] Error creando vistas secundarias:", e)
 
             QTimer.singleShot(1000, self.load_other_planets)
+            # Actualizar flotas inicialmente
+            QTimer.singleShot(2000, self.update_fleets)
         QTimer.singleShot(3000, lambda: self.login.page().runJavaScript(js, done))
 
     def create_secondary_views(self):
@@ -551,7 +564,7 @@ class MainWindow(QMainWindow):
         def retry_load_other_planets(attempt):
             """Reintentar búsqueda de planetas con delay."""
             max_attempts = 10
-            delay_ms = 500
+            delay_ms = 5000
             
             if attempt > max_attempts:
                 print(f"[DEBUG] ⚠️  No se encontraron planetas después de {max_attempts} intentos")
@@ -689,6 +702,29 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(1000, finish_and_next)
 
     # ====================================================================
+    #  FLEETS
+    # ====================================================================
+    def update_fleets(self):
+        """Actualiza el estado de flotas en movimiento"""
+        try:
+            # Usar FleetWorker para obtener datos de flotas
+            fleet_worker = FleetWorker()  # Cargará la sesión automáticamente
+            result = fleet_worker.get_fleet_status()
+            
+            if result.get("success"):
+                self.fleets_data = result.get("fleets", [])
+                self.last_fleet_update = result.get("timestamp", time.time())
+                print(f"[FLEETS] Actualizadas {len(self.fleets_data)} flotas activas")
+                self.refresh_main_panel()
+            else:
+                print(f"[FLEETS] Error: {result.get('error', 'Unknown')}")
+        
+        except Exception as e:
+            print(f"[FLEETS] Error en update_fleets: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # ====================================================================
     #  PANEL PRINCIPAL
     # ====================================================================
     def refresh_main_panel(self):
@@ -716,7 +752,7 @@ class MainWindow(QMainWindow):
             end = entry.get('end', now)
 
             remaining = max(0, end - now)
-            time = time_str(remaining)
+            time = time_str(remaining, True)
 
             progress = 0
             if end > start:
@@ -910,6 +946,50 @@ class MainWindow(QMainWindow):
             html += "</tr>"
         html += "</table>"
 
+        # ----- Flotas en movimiento -----
+        if self.fleets_data:
+            html += "<div style='background-color: #0a1a0a; padding: 10px; margin-top: 10px; border: 1px solid #0f0;'>"
+            html += "<h3 style='color: #0f0; margin: 0 0 10px 0;'>🚀 Flotas en Movimiento</h3>"
+            html += "<table><tr><th>Misión</th><th>Origen</th><th>Destino</th><th>Naves</th><th>Llegada</th><th>Estado</th></tr>"
+            
+            now = int(time.time())
+            
+            for fleet in self.fleets_data:
+                mission = fleet.get('mission_name', '—')
+                origin = f"{fleet['origin']['name']}<br>{fleet['origin']['coords']}"
+                dest = f"{fleet['destination']['name']}<br>{fleet['destination']['coords']}"
+                ships_count = fleet.get('ships_count', 0)
+                arrival_clock = fleet.get('arrival_clock', '—')
+                arrival_time = fleet.get('arrival_time', 0)
+                
+                # Calcular tiempo faltante
+                remaining = max(0, arrival_time - now)
+                time_remaining = time_str(remaining, True) if remaining > 0 else "Llegó"
+                
+                # Color según estado
+                if remaining <= 0:
+                    color = "#f00"  # Rojo - llegó
+                elif remaining <= 300:  # 5 minutos
+                    color = "#f80"  # Naranja - pronto
+                else:
+                    color = "#0f0"  # Verde - en camino
+                
+                # Indicador de regreso
+                return_indicator = " (R)" if fleet.get('return_flight', False) else ""
+                
+                html += f"<tr><td>{mission}{return_indicator}</td>"
+                html += f"<td><small>{origin}</small></td>"
+                html += f"<td><small>{dest}</small></td>"
+                html += f"<td>{ships_count}</td>"
+                html += f"<td><small>{arrival_clock}</small></td>"
+                html += f"<td><span style='color: {color}; font-weight: bold;'>{time_remaining}</span></td>"
+                html += "</tr>"
+            
+            html += "</table>"
+            html += "</div>"
+        else:
+            html += "<p style='color: #666; margin-top: 10px;'>📭 Sin flotas en movimiento</p>"
+
         self.main_label.setHtml(html)
 
     # ====================================================================
@@ -923,15 +1003,19 @@ class MainWindow(QMainWindow):
           - resources (dict)
           - queues (list of queue dicts, cada uno con 'id','label','name','start','end','planet_name','coords',...)
           - is_moon (bool): indica si es una luna
-          - parent_planet_key (str): clave del planeta padre (si es luna)
+          - parent_planet_key (str): ID del planeta padre (si es luna)
         """
         # Normalizar recursos: asegurar last_update timestamp
         resources = resources or {}
         if "last_update" not in resources:
             resources["last_update"] = time.time()
 
-        # Generar clave única basada en nombre + coordenadas
-        planet_key = self._get_planet_key(planet_name, coords)
+        # Usar el ID del planeta como clave única para evitar duplicados
+        planet_id = getattr(self, 'current_main_web_planet_id', None)
+        
+        # Si no tenemos ID, generar uno basado en coords (fallback)
+        if not planet_id:
+            planet_id = self._get_planet_key(planet_name, coords)
         
         # Filtrar las queues: solo edificios para lunas
         qlist = []
@@ -973,10 +1057,11 @@ class MainWindow(QMainWindow):
                 qlist.append(entry)
 
         if is_moon and parent_planet_key:
-            # Guardar luna de forma anidada dentro del planeta
+            # Guardar luna de forma anidada dentro del planeta usando el ID del planeta padre
             if parent_planet_key not in self.planets_data:
                 # Si el planeta padre no existe aún, crear un placeholder
                 self.planets_data[parent_planet_key] = {
+                    "planet_id": parent_planet_key,
                     "coords": "",
                     "resources": {},
                     "queues": [],
@@ -987,17 +1072,19 @@ class MainWindow(QMainWindow):
             if "moons" not in self.planets_data[parent_planet_key]:
                 self.planets_data[parent_planet_key]["moons"] = {}
             
-            # Guardar luna dentro del planeta
-            self.planets_data[parent_planet_key]["moons"][planet_key] = {
+            # Guardar luna dentro del planeta usando su ID como clave
+            self.planets_data[parent_planet_key]["moons"][planet_id] = {
                 "name": planet_name,
                 "coords": coords,
                 "resources": resources,
                 "queues": qlist,
-                "last_update": time.time()
+                "last_update": time.time(),
+                "planet_id": planet_id
             }
         else:
             # Guardar planeta normalmente
-            pdata = self.planets_data.get(planet_key, {})
+            pdata = self.planets_data.get(planet_id, {})
+            pdata["planet_id"] = planet_id
             pdata["coords"] = coords
             pdata["resources"] = resources
             pdata["queues"] = qlist
@@ -1007,7 +1094,7 @@ class MainWindow(QMainWindow):
             if "moons" not in pdata:
                 pdata["moons"] = {}
             
-            self.planets_data[planet_key] = pdata
+            self.planets_data[planet_id] = pdata
 
         # Refrescar UI
         try:

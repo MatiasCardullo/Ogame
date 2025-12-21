@@ -25,7 +25,7 @@ def tiempo_lleno(cant, cap, prod):
     except:
         return "—"
 
-def time_str(t):
+def time_str(t, not_seconds = False):
     d, r = divmod(t, 86400)
     h, r = divmod(r, 3600)
     m, s = divmod(r, 60)
@@ -33,8 +33,9 @@ def time_str(t):
     h = int(h)
     m = int(m)
     s = int(s)
-    if d > 0:
-        parts = [f"{d}d"]
+    if d > 0 or not_seconds:
+        parts = []
+        if d > 0: parts.append(f"{d}d")
         if h > 0: parts.append(f"{h}h")
         if m > 0: parts.append(f"{m}m")
         time = " ".join(parts)
