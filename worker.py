@@ -194,8 +194,22 @@ class FleetWorker:
                 "ajax": "1"
             }
             
-            r = self.session.get(self.base_url, params=params)
-            r.raise_for_status()
+            # Retry logic for connection timeouts
+            max_retries = 3
+            retry_count = 0
+            
+            while retry_count < max_retries:
+                try:
+                    r = self.session.get(self.base_url, params=params, timeout=15)
+                    r.raise_for_status()
+                    break
+                except requests.exceptions.Timeout:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        raise
+                    wait_time = 2 ** retry_count
+                    print(f"[FLEET] Timeout connecting to eventList, retrying in {wait_time}s ({retry_count}/{max_retries})")
+                    time.sleep(wait_time)
             
             fleets = parse_fleet_response(r.text)
             return {
@@ -294,33 +308,3 @@ class GalaxyWorker:
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         print(f"[GALAXY {self.galaxy}] Guardado en {output_file}")
-
-
-def main():
-    if len(sys.argv) < 2:
-        print("Uso: python worker.py <galaxy_number>")
-        print("Ejemplo: python worker.py 1")
-        sys.exit(1)
-    
-    try:
-        galaxy = int(sys.argv[1])
-        if galaxy < 1 or galaxy > 5:
-            print("Galaxia debe estar entre 1 y 5")
-            sys.exit(1)
-    except ValueError:
-        print("La galaxia debe ser un número")
-        sys.exit(1)
-    
-    output_file = f"galaxy_data_g{galaxy}.json"
-    if os.path.isfile(output_file):
-        if len(sys.argv) > 2 and sys.argv[2] == 'f':
-            print(f"Sobreescribiendo archivo {output_file}")
-        else:
-            print(f"Archivo {output_file} ya existe")
-            sys.exit(1)
-    worker = GalaxyWorker(galaxy)
-    worker.run()
-
-
-if __name__ == "__main__":
-    main()
