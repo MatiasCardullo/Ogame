@@ -142,6 +142,71 @@ extract_queue_functions = """
     }
 """
 
+extract_planet_array = """
+    (function() {
+        console.log("[DEBUG JS] Buscando planetList...");
+        
+        // Intentar encontrar planetList en el documento
+        let planetList = document.getElementById('planetList');
+        console.log("[DEBUG JS] planetList encontrado:", !!planetList);
+        
+        if (!planetList) {
+            console.log("[DEBUG JS] Intentando buscar en iframe...");
+            const iframes = document.querySelectorAll('iframe');
+            console.log("[DEBUG JS] Iframes encontrados:", iframes.length);
+            for (let iframe of iframes) {
+                try {
+                    const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                    if (iframeDoc) {
+                        planetList = iframeDoc.getElementById('planetList');
+                        if (planetList) {
+                            console.log("[DEBUG JS] planetList encontrado en iframe");
+                            break;
+                        }
+                    }
+                } catch(e) {
+                    console.log("[DEBUG JS] Error accediendo iframe:", e.message);
+                }
+            }
+        }
+        
+        if (!planetList) {
+            console.log("[DEBUG JS] No se encontró planetList en ningún lugar");
+            return null;
+        }
+        
+        console.log("[DEBUG JS] Buscando enlaces de planetas...");
+        const planets = [];
+
+        document.querySelectorAll('#planetList .smallplanet').forEach(planetEl => {
+            const planetId = planetEl.id.replace('planet-', '');
+            const nameEl = planetEl.querySelector('.planet-name');
+            const coordsEl = planetEl.querySelector('.planet-koords');
+            const planetName = nameEl ? nameEl.textContent.trim() : null;
+            const coords = coordsEl ? coordsEl.textContent.trim() : null;
+            const moonLink = planetEl.querySelector('.moonlink');
+            let moon = null;
+            if (moonLink) {
+                const moonCp = new URL(moonLink.href).searchParams.get('cp');
+                const moonImg = moonLink.querySelector('img');
+                moon = {
+                    id: moonCp,
+                    name: moonImg ? moonImg.alt.trim() : 'Moon'
+                };
+            }
+            planets.push({
+                id: planetId,
+                name: planetName,
+                coords: coords,
+                moon: moon
+            });
+        });
+        
+        console.log("[DEBUG JS] Total links retornados:", planets.length);
+        return planets.length > 0 ? planets : null;
+    })();
+    """
+
 extract_auction_script = """
 (function() {
     const auction = {};

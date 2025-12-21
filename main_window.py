@@ -12,7 +12,7 @@ from datetime import timedelta
 import time, os, subprocess, json, sys
 from js_scripts import (
     in_game, extract_meta_script, extract_resources_script,
-    extract_queue_functions, extract_auction_script
+    extract_queue_functions, extract_auction_script, extract_planet_array
 )
 from text import barra_html, cantidad, produccion, progress_color, tiempo_lleno, time_str
 
@@ -539,65 +539,6 @@ class MainWindow(QMainWindow):
     # ====================================================================
     def load_other_planets(self):
         """Busca los enlaces de otros planetas en main_web y los carga secuencialmente."""
-        script = """
-        (function() {
-            console.log("[DEBUG JS] Buscando planetList...");
-            
-            // Intentar encontrar planetList en el documento
-            let planetList = document.getElementById('planetList');
-            console.log("[DEBUG JS] planetList encontrado:", !!planetList);
-            
-            if (!planetList) {
-                console.log("[DEBUG JS] Intentando buscar en iframe...");
-                const iframes = document.querySelectorAll('iframe');
-                console.log("[DEBUG JS] Iframes encontrados:", iframes.length);
-                for (let iframe of iframes) {
-                    try {
-                        const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                        if (iframeDoc) {
-                            planetList = iframeDoc.getElementById('planetList');
-                            if (planetList) {
-                                console.log("[DEBUG JS] planetList encontrado en iframe");
-                                break;
-                            }
-                        }
-                    } catch(e) {
-                        console.log("[DEBUG JS] Error accediendo iframe:", e.message);
-                    }
-                }
-            }
-            
-            if (!planetList) {
-                console.log("[DEBUG JS] No se encontró planetList en ningún lugar");
-                return null;
-            }
-            
-            console.log("[DEBUG JS] Buscando enlaces de planetas...");
-            const links = [];
-            
-            // Buscar todos los enlaces con clase planetlink
-            const planetLinks = planetList.querySelectorAll('a.planetlink');
-            console.log("[DEBUG JS] Links encontrados:", planetLinks.length);
-            
-            for (let link of planetLinks) {
-                const dataLink = link.getAttribute('data-link');
-                const planetNameEl = link.querySelector('.planet-name');
-                const planetName = planetNameEl ? planetNameEl.textContent.trim() : 'Unknown';
-                
-                console.log("[DEBUG JS] Planeta:", planetName, "Link:", dataLink);
-                
-                if (dataLink) {
-                    links.push({
-                        url: dataLink,
-                        name: planetName
-                    });
-                }
-            }
-            
-            console.log("[DEBUG JS] Total links retornados:", links.length);
-            return links.length > 0 ? links : null;
-        })();
-        """
         
         def retry_load_other_planets(attempt):
             """Reintentar búsqueda de planetas con delay."""
@@ -621,7 +562,7 @@ class MainWindow(QMainWindow):
                     QTimer.singleShot(delay_ms, lambda: retry_load_other_planets(attempt + 1))
             
             try:
-                self.main_web.page().runJavaScript(script, handle_retry)
+                self.main_web.page().runJavaScript(extract_planet_array, handle_retry)
             except Exception as e:
                 print(f"[DEBUG] Error ejecutando script (intento {attempt}):", e)
                 QTimer.singleShot(delay_ms, lambda: retry_load_other_planets(attempt + 1))
@@ -642,7 +583,7 @@ class MainWindow(QMainWindow):
         # Ejecutar el script en main_web
         try:
             print("[DEBUG] Ejecutando búsqueda de planetList en main_web (intento 1)...")
-            self.main_web.page().runJavaScript(script, handle_planets)
+            self.main_web.page().runJavaScript(extract_planet_array, handle_planets)
         except Exception as e:
             print("[DEBUG] Error ejecutando script de planetList:", e)
             retry_load_other_planets(2)
@@ -654,32 +595,84 @@ class MainWindow(QMainWindow):
             return
         
         planet = self.planets_to_load[self.current_planet_index]
-        print(f"[DEBUG] Cargando planeta {self.current_planet_index + 1}/{len(self.planets_to_load)}: {planet['name']} en main_web")
+        planet_name = planet.get('name', 'Unknown')
+        planet_id = planet.get('id', '')
+        moon = planet.get('moon')  # Puede ser None o dict con {id, name}
+        
+        # Construir URL usando planet_id (cp = current planet)
+        planet_url = f"{self.base_url}?page=ingame&component=overview&cp={planet_id}"
+        
+        print(f"[DEBUG] Cargando planeta {self.current_planet_index + 1}/{len(self.planets_to_load)}: {planet_name} (ID: {planet_id}) en main_web")
 
         def finish_and_next():
             """Termina la extracción actual y pasa al siguiente planeta."""
             QTimer.singleShot(500, self.load_next_planet)
 
-        def on_load_finished(ok=True):
+        def on_planet_load_finished(ok=True):
             """Callback cuando termina de cargar la página del planeta."""
             try:
-                # desconectar este handler para evitar llamadas múltiples
-                self.main_web.loadFinished.disconnect(on_load_finished)
+                self.main_web.loadFinished.disconnect(on_planet_load_finished)
             except Exception:
                 pass
-            print(f"[DEBUG] Página de {planet['name']} cargada en main_web, esperando datos...")
+            print(f"[DEBUG] Página de {planet_name} cargada en main_web, esperando datos...")
             # Los datos se extraerán automáticamente vía on_main_web_loaded y los handlers
-            QTimer.singleShot(1200, finish_and_next)
+            
+            # Si hay luna, cargarla después
+            if moon and moon.get('id'):
+                QTimer.singleShot(1200, self.load_moon_for_current_planet)
+            else:
+                QTimer.singleShot(1200, finish_and_next)
 
         try:
-            self.main_web.loadFinished.connect(on_load_finished)
-            self.main_web.load(QUrl(planet['url']))
+            self.main_web.loadFinished.connect(on_planet_load_finished)
+            self.main_web.load(QUrl(planet_url))
         except Exception as e:
             print('[DEBUG] Error cargando planeta en main_web:', e)
             QTimer.singleShot(1000, finish_and_next)
 
         # avanzar índice inmediatamente
         self.current_planet_index += 1
+
+    def load_moon_for_current_planet(self):
+        """Carga la luna del planeta actual si existe."""
+        if not hasattr(self, 'planets_to_load') or self.current_planet_index == 0:
+            return
+        
+        # El índice ya fue incrementado, así que usamos current_planet_index - 1
+        planet = self.planets_to_load[self.current_planet_index - 1]
+        moon = planet.get('moon')
+        
+        if not moon or not moon.get('id'):
+            return
+        
+        moon_id = moon.get('id')
+        moon_name = moon.get('name', 'Moon')
+        
+        # Construir URL usando moon_id
+        moon_url = f"{self.base_url}?page=ingame&component=overview&cp={moon_id}"
+        
+        print(f"[DEBUG] Cargando luna {moon_name} (ID: {moon_id}) en main_web")
+
+        def finish_and_next():
+            """Termina la extracción de luna y pasa al siguiente planeta."""
+            QTimer.singleShot(500, self.load_next_planet)
+
+        def on_moon_load_finished(ok=True):
+            """Callback cuando termina de cargar la página de la luna."""
+            try:
+                self.main_web.loadFinished.disconnect(on_moon_load_finished)
+            except Exception:
+                pass
+            print(f"[DEBUG] Página de {moon_name} cargada en main_web, esperando datos...")
+            # Los datos se extraerán automáticamente vía on_main_web_loaded y los handlers
+            QTimer.singleShot(1200, finish_and_next)
+
+        try:
+            self.main_web.loadFinished.connect(on_moon_load_finished)
+            self.main_web.load(QUrl(moon_url))
+        except Exception as e:
+            print('[DEBUG] Error cargando luna en main_web:', e)
+            QTimer.singleShot(1000, finish_and_next)
 
     # ====================================================================
     #  PANEL PRINCIPAL
