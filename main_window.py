@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
-    QFileDialog, QLabel, QTextEdit, QPushButton, QSystemTrayIcon
+    QFileDialog, QLabel, QTextEdit, QPushButton, QSystemTrayIcon, QComboBox
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
@@ -128,9 +128,41 @@ class MainWindow(QMainWindow):
         top_container.setLayout(top_layout)
         main_layout.addWidget(top_container)
         
-        self.main_label = QTextEdit()
-        self.main_label.setReadOnly(True)
-        main_layout.addWidget(self.main_label, 1)  # stretch factor = 1
+        # ----- Control de intervalo de actualización -----
+        update_interval_layout = QHBoxLayout()
+        update_interval_layout.addWidget(QLabel("⏱️ Intervalo de actualización:"))
+        self.update_interval_combo = QComboBox()
+        self.update_interval_combo.addItem("1 segundo", 1000)
+        self.update_interval_combo.addItem("30 segundos", 30000)
+        self.update_interval_combo.addItem("1 minuto", 60000)
+        self.update_interval_combo.setCurrentIndex(1)  # Default: 30 segundos
+        self.update_interval_combo.currentIndexChanged.connect(self.on_update_interval_changed)
+        update_interval_layout.addWidget(self.update_interval_combo)
+        update_interval_layout.addStretch()
+        main_layout.addLayout(update_interval_layout)
+        
+        # ----- Tabs internos para recursos/flotas -----
+        self.panel_tabs = QTabWidget()
+        
+        # Tab 1: Recursos y Colas
+        resources_tab = QWidget()
+        resources_layout = QVBoxLayout()
+        self.resources_label = QTextEdit()
+        self.resources_label.setReadOnly(True)
+        resources_layout.addWidget(self.resources_label)
+        resources_tab.setLayout(resources_layout)
+        self.panel_tabs.addTab(resources_tab, "📦 Recursos y Colas")
+        
+        # Tab 2: Flotas en Movimiento
+        fleets_tab = QWidget()
+        fleets_layout = QVBoxLayout()
+        self.fleets_label = QTextEdit()
+        self.fleets_label.setReadOnly(True)
+        fleets_layout.addWidget(self.fleets_label)
+        fleets_tab.setLayout(fleets_layout)
+        self.panel_tabs.addTab(fleets_tab, "🚀 Flotas en Movimiento")
+        
+        main_layout.addWidget(self.panel_tabs, 1)  # stretch factor = 1
 
         self._notif_label = QLabel("")
         self._notif_label.setStyleSheet("color: #0f0; font-weight: bold; padding: 8px;")
@@ -165,20 +197,29 @@ class MainWindow(QMainWindow):
         # global queues (research, etc.) keyed by queue id
         self.global_queues = {}
 
+        # Intervalo de actualización (en ms)
+        self.current_update_interval = 30000  # Default: 30 segundos
+
         # Timers
         self.timer_global = QTimer(self)
-        self.timer_global.setInterval(60000)
+        self.timer_global.setInterval(self.current_update_interval)
         self.timer_global.timeout.connect(self.increment_all_planets)
         self.timer_global.start()
 
         self.queue_timer = QTimer(self)
-        self.queue_timer.setInterval(60000)
+        self.queue_timer.setInterval(self.current_update_interval)
         self.queue_timer.timeout.connect(self.check_queues)
         self.queue_timer.start()
 
-        # Fleet update timer (every 30 seconds)
+        # Panel refresh timer (usa el intervalo también)
+        self.panel_timer = QTimer(self)
+        self.panel_timer.setInterval(self.current_update_interval)
+        self.panel_timer.timeout.connect(self.refresh_main_panel)
+        self.panel_timer.start()
+
+        # Fleet update timer
         self.fleet_timer = QTimer(self)
-        self.fleet_timer.setInterval(30000)
+        self.fleet_timer.setInterval(60000)
         self.fleet_timer.timeout.connect(self.update_fleets)
         self.fleet_timer.start()
 
@@ -197,6 +238,22 @@ class MainWindow(QMainWindow):
         web.setPage(page)
         web.load(QUrl(url))
         return web
+
+    def on_update_interval_changed(self):
+        """Actualiza el intervalo de los timers cuando el usuario cambia la selección."""
+        new_interval = self.update_interval_combo.currentData()
+        if new_interval is not None:
+            self.current_update_interval = new_interval
+            
+            # Actualizar timers
+            if hasattr(self, 'timer_global'):
+                self.timer_global.setInterval(new_interval)
+            if hasattr(self, 'queue_timer'):
+                self.queue_timer.setInterval(new_interval)
+            if hasattr(self, 'panel_timer'):
+                self.panel_timer.setInterval(new_interval)
+            
+            print(f"[DEBUG] Intervalo de actualización cambiado a {new_interval}ms")
 
     def setup_main_web_extraction(self):
         """Configura main_web para extraer datos automáticamente cuando carga una página."""
@@ -728,6 +785,12 @@ class MainWindow(QMainWindow):
     #  PANEL PRINCIPAL
     # ====================================================================
     def refresh_main_panel(self):
+        """Actualiza ambas secciones del panel (recursos y flotas)"""
+        self.refresh_resources_panel()
+        self.refresh_fleets_panel()
+
+    def refresh_resources_panel(self):
+        """Actualiza la pestaña de Recursos y Colas"""
         html = """
         <style>
             body { background-color: #000; color: #EEE; font-family: Consolas; }
@@ -738,12 +801,12 @@ class MainWindow(QMainWindow):
             .research-section { background-color: #1a1a2e; padding: 8px; margin-top: 10px; border: 1px solid #0af; }
             .moon-section { background-color: #0a1a1a; padding: 4px 6px; margin-top: 4px; border-left: 2px solid #0af; font-size: 11px; }
         </style>
-        <h2>🌌 Panel Principal — Recursos y Colas</h2>
+        <h2>🌌 Recursos y Colas</h2>
         """
 
         if not self.planets_data:
             html += "<p>No hay datos de planetas aún.</p>"
-            self.main_label.setText(html)
+            self.resources_label.setText(html)
             return
 
         def queue_entry(entry, now):
@@ -854,7 +917,10 @@ class MainWindow(QMainWindow):
                 cap = r.get(capkey, 1)
                 prodInt = r.get(prodkey, 0)
                 if cant < cap:
-                    full = f"({produccion(prodInt)}) lleno en {tiempo_lleno(cant, cap, prodInt)}"
+                    if prodInt > 0:
+                        full = f"({produccion(prodInt)}) lleno en {tiempo_lleno(cant, cap, prodInt)}"
+                    else:
+                        full = f"({produccion(prodInt)}) vacio en {tiempo_lleno(cant, cap, -prodInt)}"
                 else:
                     full = f" - almacenes llenos!!!"
                 char = progress_color((cant / cap) * 100)
@@ -946,51 +1012,65 @@ class MainWindow(QMainWindow):
             html += "</tr>"
         html += "</table>"
 
-        # ----- Flotas en movimiento -----
-        if self.fleets_data:
-            html += "<div style='background-color: #0a1a0a; padding: 10px; margin-top: 10px; border: 1px solid #0f0;'>"
-            html += "<h3 style='color: #0f0; margin: 0 0 10px 0;'>🚀 Flotas en Movimiento</h3>"
-            html += "<table><tr><th>Misión</th><th>Origen</th><th>Destino</th><th>Naves</th><th>Llegada</th><th>Estado</th></tr>"
-            
-            now = int(time.time())
-            
-            for fleet in self.fleets_data:
-                mission = fleet.get('mission_name', '—')
-                origin = f"{fleet['origin']['name']}<br>{fleet['origin']['coords']}"
-                dest = f"{fleet['destination']['name']}<br>{fleet['destination']['coords']}"
-                ships_count = fleet.get('ships_count', 0)
-                arrival_clock = fleet.get('arrival_clock', '—')
-                arrival_time = fleet.get('arrival_time', 0)
-                
-                # Calcular tiempo faltante
-                remaining = max(0, arrival_time - now)
-                time_remaining = time_str(remaining, True) if remaining > 0 else "Llegó"
-                
-                # Color según estado
-                if remaining <= 0:
-                    color = "#f00"  # Rojo - llegó
-                elif remaining <= 300:  # 5 minutos
-                    color = "#f80"  # Naranja - pronto
-                else:
-                    color = "#0f0"  # Verde - en camino
-                
-                # Indicador de regreso
-                return_indicator = " (R)" if fleet.get('return_flight', False) else ""
-                
-                html += f"<tr><td>{mission}{return_indicator}</td>"
-                html += f"<td><small>{origin}</small></td>"
-                html += f"<td><small>{dest}</small></td>"
-                html += f"<td>{ships_count}</td>"
-                html += f"<td><small>{arrival_clock}</small></td>"
-                html += f"<td><span style='color: {color}; font-weight: bold;'>{time_remaining}</span></td>"
-                html += "</tr>"
-            
-            html += "</table>"
-            html += "</div>"
-        else:
-            html += "<p style='color: #666; margin-top: 10px;'>📭 Sin flotas en movimiento</p>"
+        self.resources_label.setHtml(html)
 
-        self.main_label.setHtml(html)
+    def refresh_fleets_panel(self):
+        """Actualiza la pestaña de Flotas en Movimiento"""
+        html = """
+        <style>
+            body { background-color: #000; color: #EEE; font-family: Consolas; }
+            table { border-collapse: collapse; margin-top: 10px; width: 100%; }
+            th { background-color: #222; color: #0f0; border: 1px solid #333; padding: 8px; text-align: center; }
+            td { background-color: #111; color: #EEE; border: 1px solid #333; padding: 6px; font-size: 12px; }
+            .bar { font-family: monospace; }
+        </style>
+        <h2>🚀 Flotas en Movimiento</h2>
+        """
+
+        if not self.fleets_data:
+            html += "<p style='color: #666;'>📭 Sin flotas en movimiento</p>"
+            self.fleets_label.setHtml(html)
+            return
+
+        html += "<table><tr><th>Misión</th><th>Origen</th><th>Destino</th><th>Naves</th><th>Llegada</th><th>Estado</th></tr>"
+        
+        now = int(time.time())
+        
+        for fleet in self.fleets_data:
+            mission = fleet.get('mission_name', '—')
+            origin = f"{fleet['origin']['name']}<br>{fleet['origin']['coords']}"
+            dest = f"{fleet['destination']['name']}<br>{fleet['destination']['coords']}"
+            ships_count = fleet.get('ships_count', 0)
+            arrival_clock = fleet.get('arrival_clock', '—')
+            arrival_time = fleet.get('arrival_time', 0)
+            
+            # Calcular tiempo faltante
+            remaining = max(0, arrival_time - now)
+            time_remaining = time_str(remaining, True) if remaining > 0 else "Llegó"
+            
+            # Color según estado
+            if remaining <= 0:
+                color = "#f00"  # Rojo - llegó
+            elif remaining <= 300:  # 5 minutos
+                color = "#f80"  # Naranja - pronto
+            else:
+                color = "#0f0"  # Verde - en camino
+            
+            # Indicador de regreso
+            return_indicator = " (R)" if fleet.get('return_flight', False) else ""
+            
+            html += f"<tr><td>{mission}{return_indicator}</td>"
+            html += f"<td><small>{origin}</small></td>"
+            html += f"<td><small>{dest}</small></td>"
+            html += f"<td>{ships_count}</td>"
+            html += f"<td><small>{arrival_clock}</small></td>"
+            html += f"<td><span style='color: {color}; font-weight: bold;'>{time_remaining}</span></td>"
+            html += "</tr>"
+        
+        html += "</table>"
+        
+        self.fleets_label.setHtml(html)
+
 
     # ====================================================================
     #  UPDATE PLANET DATA (API nueva con queues que incluyen id)

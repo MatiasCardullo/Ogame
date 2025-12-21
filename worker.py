@@ -251,8 +251,38 @@ class GalaxyWorker:
             payload = {"galaxy": g, "system": s}
             if token:
                 payload["token"] = token
-            r = session.post(BASE_URL, params=PARAMS, data=payload)
-            token, parsed = parse_galaxy_response(r.text)
+            
+            # Reintentos con backoff exponencial
+            max_retries = 3
+            retry_count = 0
+            parsed = None
+            
+            while retry_count < max_retries and parsed is None:
+                try:
+                    r = session.post(BASE_URL, params=PARAMS, data=payload, timeout=10)
+                    token, parsed = parse_galaxy_response(r.text)
+                    
+                    if parsed is None:
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            wait_time = 2 ** retry_count  # Backoff: 2, 4, 8 segundos
+                            print(f"G:{g} S:{s} - Respuesta inválida, reintentando en {wait_time}s ({retry_count}/{max_retries})")
+                            time.sleep(wait_time)
+                        else:
+                            print(f"G:{g} S:{s} - Error tras {max_retries} reintentos")
+                    else:
+                        if retry_count > 0:
+                            print(f"G:{g} S:{s} - Conexión exitosa tras {retry_count} reintento(s)")
+                        break
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        wait_time = 2 ** retry_count
+                        print(f"G:{g} S:{s} - Error de conexión: {e}, reintentando en {wait_time}s ({retry_count}/{max_retries})")
+                        time.sleep(wait_time)
+                    else:
+                        print(f"G:{g} S:{s} - Error tras {max_retries} reintentos: {e}")
+            
             print(f"G:{g} S:{s}")
             if parsed:
                 data[str(g)][str(s)] = parsed
