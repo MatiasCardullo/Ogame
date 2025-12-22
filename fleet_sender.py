@@ -257,7 +257,6 @@ def send_fleet(fleet_data, profile_path="profile_data"):
         traceback.print_exc()
         return False, f"Error: {str(e)}"
 
-
 def send_scheduled_fleets(scheduled_fleets, profile_path="profile_data", fleets_data=None):
     """
     Envía múltiples flotas programadas
@@ -283,15 +282,9 @@ def send_scheduled_fleets(scheduled_fleets, profile_path="profile_data", fleets_
         if timing_type == "Enviar ahora":
             should_send = True
         elif timing_type == "Cuando esté disponible":
-            # Verificar si hay expediciones en movimiento
-            if fleets_data:
-                expeditions_active = any(
-                    f.get("mission_name", "").lower() == "expedición"
-                    for f in fleets_data
-                )
-                should_send = not expeditions_active
-            else:
-                should_send = True
+            # "Cuando esté disponible" = enviar todas las expediciones programadas en secuencia
+            # sin restricciones. Simplemente envíalas una tras otra.
+            should_send = True
         elif timing_type == "Programar hora específica":
             scheduled_time = fleet.get("scheduled_time", 0)
             should_send = current_time >= scheduled_time
@@ -314,7 +307,7 @@ def send_scheduled_fleets(scheduled_fleets, profile_path="profile_data", fleets_
                     print(f"🔄 Repetición: {fleet['repeat_remaining']} restantes")
                 
                 # Esperar entre envíos
-                time.sleep(2)
+                time.sleep(1)
             
             results.append({
                 "fleet_id": fleet.get("id"),

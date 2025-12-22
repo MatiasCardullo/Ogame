@@ -179,6 +179,10 @@ class MainWindow(QMainWindow):
         fleets_tab.setLayout(fleets_layout)
         self.panel_tabs.addTab(fleets_tab, "🚀 Flotas en Movimiento")
         
+        # Tab 3: Debris y Reciclaje
+        debris_tab = self.create_debris_tab()
+        self.panel_tabs.addTab(debris_tab, "♻️ Debris y Reciclaje")
+        
         main_layout.addWidget(self.panel_tabs, 1)  # stretch factor = 1
 
         self._notif_label = QLabel("")
@@ -257,7 +261,35 @@ class MainWindow(QMainWindow):
         
         # Envíos programados de naves
         self.scheduled_fleets = []
+        self.load_scheduled_fleets()
     
+    def closeEvent(self, event):
+        """Guardar datos al cerrar la aplicación"""
+        self.save_scheduled_fleets()
+        super().closeEvent(event)
+    
+    def load_scheduled_fleets(self):
+        """Carga las misiones programadas desde un archivo JSON"""
+        try:
+            if os.path.exists("scheduled_fleets.json"):
+                with open("scheduled_fleets.json", "r", encoding="utf-8") as f:
+                    self.scheduled_fleets = json.load(f)
+                    print(f"✅ Cargadas {len(self.scheduled_fleets)} misiones programadas")
+                    # Actualizar lista visual después de cargar
+                    if hasattr(self, 'fleet_scheduled_list'):
+                        self._refresh_scheduled_fleets_list()
+        except Exception as e:
+            print(f"⚠️ Error cargando misiones: {e}")
+    
+    def save_scheduled_fleets(self):
+        """Guarda las misiones programadas en un archivo JSON"""
+        try:
+            with open("scheduled_fleets.json", "w", encoding="utf-8") as f:
+                json.dump(self.scheduled_fleets, f, indent=2, ensure_ascii=False)
+                print(f"✅ Guardadas {len(self.scheduled_fleets)} misiones programadas")
+        except Exception as e:
+            print(f"⚠️ Error guardando misiones: {e}")
+
     def web_engine(self, profile, url):
         web = QWebEngineView()
         page = CustomWebPage(profile, web, main_window=self)
@@ -272,7 +304,7 @@ class MainWindow(QMainWindow):
         scheduler_layout.setContentsMargins(5, 5, 5, 5)
         
         # Título
-        title = QLabel("⏳ Programador de Naves")
+        title = QLabel("⏳ Programador de Misiones [WIP]")
         title_font = title.font()
         title_font.setBold(True)
         title_font.setPointSize(11)
@@ -446,8 +478,8 @@ class MainWindow(QMainWindow):
         
         scheduler_layout.addLayout(buttons_layout)
         
-        # Historial de envíos programados
-        history_label = QLabel("📜 Envíos Programados:")
+        # Historial de misiones programadas
+        history_label = QLabel("📜 Misiones Programadas:")
         history_label.setStyleSheet("font-weight: bold; margin-top: 15px;")
         scheduler_layout.addWidget(history_label)
         
@@ -471,13 +503,276 @@ class MainWindow(QMainWindow):
         
         self.fleet_scheduled_list = QListWidget()
         self.fleet_scheduled_list.setMaximumHeight(120)
+        self.fleet_scheduled_list.itemSelectionChanged.connect(self.on_fleet_selection_changed)
         scheduler_layout.addWidget(self.fleet_scheduled_list)
+        
+        # Botones de editar y eliminar
+        fleet_actions_layout = QHBoxLayout()
+        
+        edit_btn = QPushButton("✏️ Editar")
+        edit_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4a6a0a;
+                color: #ff0;
+                border: 1px solid #ff0;
+                padding: 4px;
+                border-radius: 3px;
+                font-size: 10px;
+            }
+            QPushButton:hover {
+                background-color: #6a8a0f;
+            }
+        """)
+        edit_btn.clicked.connect(self.on_edit_fleet)
+        fleet_actions_layout.addWidget(edit_btn)
+        
+        delete_btn = QPushButton("🗑️ Eliminar")
+        delete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6a0a0a;
+                color: #f00;
+                border: 1px solid #f00;
+                padding: 4px;
+                border-radius: 3px;
+                font-size: 10px;
+            }
+            QPushButton:hover {
+                background-color: #8a0f0f;
+            }
+        """)
+        delete_btn.clicked.connect(self.on_delete_fleet)
+        fleet_actions_layout.addWidget(delete_btn)
+        
+        fleet_actions_layout.addStretch()
+        scheduler_layout.addLayout(fleet_actions_layout)
         
         # Stretch para que el resto del espacio sea vacío
         scheduler_layout.addStretch()
         
         scheduler_widget.setLayout(scheduler_layout)
         return scheduler_widget
+
+    def create_debris_tab(self):
+        """Crea la pestaña para mostrar debris y programar reciclajes"""
+        debris_widget = QWidget()
+        debris_layout = QVBoxLayout()
+        debris_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Título
+        title = QLabel("♻️ Escombros Disponibles [WIP]")
+        title_font = title.font()
+        title_font.setBold(True)
+        title_font.setPointSize(11)
+        title.setFont(title_font)
+        debris_layout.addWidget(title)
+        
+        # Botón para cargar debris desde archivos JSON
+        load_btn = QPushButton("📂 Cargar Datos de Debris")
+        load_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0a3a6a;
+                color: #0ff;
+                border: 1px solid #0ff;
+                padding: 6px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0a5a9a;
+            }
+        """)
+        load_btn.clicked.connect(self.load_debris_data)
+        debris_layout.addWidget(load_btn)
+        
+        # Tabla de debris
+        self.debris_list = QListWidget()
+        self.debris_list.setSelectionMode(self.debris_list.SelectionMode.MultiSelection)
+        debris_layout.addWidget(QLabel("🎯 Debris Detectados:"))
+        debris_layout.addWidget(self.debris_list)
+        
+        # Filtros
+        filters_group = QGroupBox("🔍 Filtros")
+        filters_form = QFormLayout()
+        
+        self.debris_min_metal = QSpinBox()
+        self.debris_min_metal.setMinimum(0)
+        self.debris_min_metal.setMaximum(999999999)
+        self.debris_min_metal.setValue(0)
+        filters_form.addRow("Metal mínimo:", self.debris_min_metal)
+        
+        self.debris_max_distance = QSpinBox()
+        self.debris_max_distance.setMinimum(1)
+        self.debris_max_distance.setMaximum(9)
+        self.debris_max_distance.setValue(9)
+        filters_form.addRow("Galaxia máxima:", self.debris_max_distance)
+        
+        filters_group.setLayout(filters_form)
+        debris_layout.addWidget(filters_group)
+        
+        # Botones de acción
+        actions_layout = QHBoxLayout()
+        
+        refresh_btn = QPushButton("🔄 Actualizar Lista")
+        refresh_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4a6a0a;
+                color: #ff0;
+                border: 1px solid #ff0;
+                padding: 6px;
+                border-radius: 4px;
+            }
+        """)
+        refresh_btn.clicked.connect(self.refresh_debris_list)
+        actions_layout.addWidget(refresh_btn)
+        
+        recycle_btn = QPushButton("♻️ Programar Reciclaje")
+        recycle_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0a4a0a;
+                color: #0f0;
+                border: 1px solid #0f0;
+                padding: 6px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0f8a0f;
+            }
+        """)
+        recycle_btn.clicked.connect(self.schedule_recycling_missions)
+        actions_layout.addWidget(recycle_btn)
+        
+        actions_layout.addStretch()
+        debris_layout.addLayout(actions_layout)
+        
+        # Stretch
+        debris_layout.addStretch()
+        
+        debris_widget.setLayout(debris_layout)
+        
+        # Data
+        self.debris_data = []
+        
+        return debris_widget
+
+    def load_debris_data(self):
+        """Carga datos de debris desde los archivos galaxy_data_g*.json"""
+        try:
+            combined_data = {}
+            
+            # Cargar datos de todas las galaxias
+            for g in range(1, 6):
+                galaxy_file = f"galaxy_data_g{g}.json"
+                if os.path.isfile(galaxy_file):
+                    with open(galaxy_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        combined_data.update(data)
+            
+            if not combined_data:
+                self._notif_label.setText("⚠️ No se encontraron archivos de galaxia")
+                return
+            
+            # Extraer lista de debris
+            self.debris_data = extract_debris_list(combined_data)
+            
+            # Ordenar por cantidad de metal descendente
+            self.debris_data.sort(key=lambda x: x.get("metal", 0), reverse=True)
+            
+            self._notif_label.setText(f"✅ Cargados {len(self.debris_data)} puntos de debris")
+            self.refresh_debris_list()
+            
+        except Exception as e:
+            self._notif_label.setText(f"❌ Error cargando debris: {str(e)}")
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def refresh_debris_list(self):
+        """Actualiza la lista visual de debris aplicando filtros"""
+        self.debris_list.clear()
+        
+        if not self.debris_data:
+            self.debris_list.addItem("No hay datos de debris. Carga los archivos primero.")
+            return
+        
+        min_metal = self.debris_min_metal.value()
+        max_galaxy = self.debris_max_distance.value()
+        
+        # Filtrar debris
+        filtered = [
+            d for d in self.debris_data
+            if d.get("metal", 0) >= min_metal and d.get("galaxy", 9) <= max_galaxy
+        ]
+        
+        # Mostrar en la lista
+        for debris in filtered:
+            g = debris.get("galaxy", 0)
+            s = debris.get("system", 0)
+            p = debris.get("position", 0)
+            metal = debris.get("metal", 0)
+            crystal = debris.get("crystal", 0)
+            deuterium = debris.get("deuterium", 0)
+            ships_needed = debris.get("requiredShips", "?")
+            
+            total_resources = metal + crystal + deuterium
+            
+            item_text = f"📍 {g}:{s}:{p} | Metal: {cantidad(metal)} | Crystal: {cantidad(crystal)} | Deut: {cantidad(deuterium)} | Total: {cantidad(total_resources)} | Naves: {ships_needed}"
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.ItemDataRole.UserRole, debris)  # Guardar el objeto debris
+            self.debris_list.addItem(item)
+
+    def schedule_recycling_missions(self):
+        """Programa misiones de reciclaje para los debris seleccionados"""
+        selected_items = self.debris_list.selectedItems()
+        
+        if not selected_items:
+            self._notif_label.setText("⚠️ Selecciona al menos un punto de debris")
+            return
+        
+        origin_text = self.fleet_planet_combo.currentText()
+        if origin_text == "Seleccionar planeta...":
+            self._notif_label.setText("⚠️ Selecciona un planeta de origen")
+            return
+        
+        # Crear misión de reciclaje para cada debris seleccionado
+        missions_created = 0
+        
+        for item in selected_items:
+            debris = item.data(Qt.ItemDataRole.UserRole)
+            if not debris:
+                continue
+            
+            g = debris.get("galaxy", 0)
+            s = debris.get("system", 0)
+            p = debris.get("position", 0)
+            coords = f"{g}:{s}:{p}"
+            
+            # Crear entry de misión
+            fleet_entry = {
+                "id": len(self.scheduled_fleets),
+                "mission": "Recolecta de escombros",
+                "origin": origin_text,
+                "destination": coords,
+                "ships": {"Reciclador": 1},  # Por defecto 1 reciclador
+                "total_ships": 1,
+                "timing_type": "Enviar ahora",
+                "scheduled_time": time.time(),
+                "repeat_count": 1,
+                "repeat_remaining": 1,
+                "status": "Pendiente",
+                "created_at": time.time()
+            }
+            
+            self.scheduled_fleets.append(fleet_entry)
+            missions_created += 1
+        
+        if missions_created > 0:
+            self._refresh_scheduled_fleets_list()
+            self.save_scheduled_fleets()
+            self._notif_label.setText(f"✅ {missions_created} misiones de reciclaje programadas")
+        
+        # Limpiar selección
+        self.debris_list.clearSelection()
 
     def on_fleet_mission_changed(self, mission_text):
         """Actualiza opciones según la misión seleccionada"""
@@ -583,14 +878,11 @@ class MainWindow(QMainWindow):
         
         self.scheduled_fleets.append(fleet_entry)
         
-        repeat_text = f"x{repeat_count}" if repeat_count > 1 else ""
-        entry_text = f"📤 {mission} → {coords} ({total_ships} naves) - {send_time_str} {repeat_text}".strip()
-        
-        # Agregar a la lista visual
-        item = QListWidgetItem(entry_text)
-        self.fleet_scheduled_list.addItem(item)
-        
         self._notif_label.setText(f"✅ Envío programado: {mission} a {coords} (x{repeat_count})")
+        
+        # Actualizar lista visual
+        self._refresh_scheduled_fleets_list()
+        self.save_scheduled_fleets()
         
         # Limpiar formulario
         self.on_clear_fleet_form()
@@ -626,19 +918,8 @@ class MainWindow(QMainWindow):
             successful = sum(1 for r in results if r["success"])
             
             # Actualizar lista visual
-            self.fleet_scheduled_list.clear()
-            for fleet in self.scheduled_fleets:
-                if fleet["status"] != "Enviada":
-                    status_icon = "⏳"
-                elif fleet["repeat_remaining"] > 0:
-                    status_icon = "🔄"
-                else:
-                    status_icon = "✅"
-                
-                repeat_text = f" (x{fleet['repeat_remaining']})" if fleet.get("repeat_remaining", 0) > 0 else ""
-                entry_text = f"{status_icon} {fleet['mission']} → {fleet['destination']}{repeat_text}"
-                item = QListWidgetItem(entry_text)
-                self.fleet_scheduled_list.addItem(item)
+            self._refresh_scheduled_fleets_list()
+            self.save_scheduled_fleets()
             
             self._notif_label.setText(f"✅ {successful}/{len(results)} envíos ejecutados")
         
@@ -672,23 +953,89 @@ class MainWindow(QMainWindow):
                 successful = sum(1 for r in results if r["success"])
                 print(f"[AUTO-SEND] {successful}/{len(results)} envíos ejecutados")
                 
-                # Actualizar lista visual
-                self.fleet_scheduled_list.clear()
-                for fleet in self.scheduled_fleets:
-                    if fleet["status"] == "Completada":
-                        status_icon = "✅"
-                    elif fleet["status"] == "Enviada":
-                        status_icon = "🔄" if fleet.get("repeat_remaining", 0) > 0 else "✅"
-                    else:
-                        status_icon = "⏳"
-                    
-                    repeat_text = f" (x{fleet['repeat_remaining']})" if fleet.get("repeat_remaining", 0) > 0 else ""
-                    entry_text = f"{status_icon} {fleet['mission']} → {fleet['destination']}{repeat_text}"
-                    item = QListWidgetItem(entry_text)
-                    self.fleet_scheduled_list.addItem(item)
+                # Actualizar lista visual y guardar
+                self._refresh_scheduled_fleets_list()
+                self.save_scheduled_fleets()
         
         except Exception as e:
             print(f"[AUTO-SEND] Error: {str(e)}")
+
+    def on_fleet_selection_changed(self):
+        """Se ejecuta cuando se selecciona un elemento de la lista de misiones"""
+        pass
+
+    def on_edit_fleet(self):
+        """Edita la misión seleccionada"""
+        current_row = self.fleet_scheduled_list.currentRow()
+        if current_row < 0:
+            self._notif_label.setText("⚠️ Selecciona una misión para editar")
+            return
+        
+        fleet = self.scheduled_fleets[current_row]
+        
+        # Si ya fue enviada, no permitir editar
+        if fleet.get("status") == "Enviada" or fleet.get("status") == "Completada":
+            self._notif_label.setText("⚠️ No puedes editar una misión que ya fue enviada")
+            return
+        
+        # Cargar datos en el formulario
+        self.fleet_mission_combo.setCurrentText(fleet.get("mission", "Expedición"))
+        self.fleet_planet_combo.setCurrentText(fleet.get("origin", ""))
+        
+        # Extraer coordenadas
+        coords = fleet.get("destination", "1:1:1").split(":")
+        self.fleet_dest_galaxy.setValue(int(coords[0]))
+        self.fleet_dest_system.setValue(int(coords[1]))
+        self.fleet_dest_position.setValue(int(coords[2]))
+        
+        # Cargar naves
+        for ship_name, ship_info in self.fleet_ships.items():
+            ship_info["spinbox"].setValue(fleet.get("ships", {}).get(ship_name, 0))
+        
+        # Cargar timing
+        self.fleet_timing_combo.setCurrentText(fleet.get("timing_type", "Enviar ahora"))
+        if fleet.get("scheduled_time"):
+            dt = QDateTime.fromSecsSinceEpoch(int(fleet.get("scheduled_time", 0)))
+            self.fleet_send_time.setDateTime(dt)
+        self.fleet_repeat_count.setValue(fleet.get("repeat_count", 1))
+        
+        # Eliminar de la lista
+        self.scheduled_fleets.pop(current_row)
+        self._refresh_scheduled_fleets_list()
+        
+        self._notif_label.setText(f"✏️ Misión editada - Guarda los cambios con 'Enviar Flotas'")
+    
+    def on_delete_fleet(self):
+        """Elimina la misión seleccionada"""
+        current_row = self.fleet_scheduled_list.currentRow()
+        if current_row < 0:
+            self._notif_label.setText("⚠️ Selecciona una misión para eliminar")
+            return
+        
+        fleet = self.scheduled_fleets[current_row]
+        mission = fleet.get("mission", "Expedición")
+        destination = fleet.get("destination", "?:?:?")
+        
+        self.scheduled_fleets.pop(current_row)
+        self._refresh_scheduled_fleets_list()
+        
+        self._notif_label.setText(f"🗑️ Eliminada: {mission} → {destination}")
+        self.save_scheduled_fleets()
+    
+    def _refresh_scheduled_fleets_list(self):
+        """Actualiza la lista visual de misiones programadas"""
+        self.fleet_scheduled_list.clear()
+        for idx, fleet in enumerate(self.scheduled_fleets):
+            status_icon = "⏳"
+            if fleet.get("status") == "Enviada":
+                status_icon = "🔄" if fleet.get("repeat_remaining", 0) > 0 else "✅"
+            elif fleet.get("status") == "Completada":
+                status_icon = "✅"
+            
+            repeat_text = f" (x{fleet.get('repeat_remaining', 1)})" if fleet.get("repeat_count", 1) > 1 else ""
+            entry_text = f"{status_icon} {fleet.get('mission')} → {fleet.get('destination')}{repeat_text}"
+            item = QListWidgetItem(entry_text)
+            self.fleet_scheduled_list.addItem(item)
 
     def update_fleet_origin_combo(self):
         """Actualiza el combo de planetas disponibles basado en los datos cargados"""

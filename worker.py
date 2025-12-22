@@ -137,8 +137,7 @@ def parse_fleet_response(html_text):
             1: "Desplegar",
             3: "Transportar",
             8: "Recolectar",
-            14: "Expedición (en proceso)",
-            15: "Expedición (antiguo)",
+            15: "Expedición",
             18: "Lifeform"
         }
         
