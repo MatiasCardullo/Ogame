@@ -134,22 +134,12 @@ def parse_fleet_response(html_text):
         
         # Obtener tipo de misión
         mission_types = {
-            1: "Ataque",
-            2: "Transportar",
-            3: "Estacionar",
-            4: "Espiar",
-            5: "Colonizar",
-            6: "Explosivo",
-            7: "Defender",
+            1: "Desplegar",
+            3: "Transportar",
             8: "Recolectar",
-            9: "Comerciar",
-            10: "Transportar tropas",
-            11: "Parking (Lunas)",
-            12: "Misión de Lunas",
-            13: "Destruir",
-            14: "Expedición",
+            14: "Expedición (en proceso)",
             15: "Expedición (antiguo)",
-            16: "Viajar Rápido"
+            18: "Lifeform"
         }
         
         mission_name = mission_types.get(mission_type, f"Tipo {mission_type}")

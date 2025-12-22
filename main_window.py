@@ -240,6 +240,12 @@ class MainWindow(QMainWindow):
         self.fleet_timer.timeout.connect(self.update_fleets)
         self.fleet_timer.start()
 
+        # Fleet sender timer (ejecutar envíos cada 30 segundos)
+        self.fleet_sender_timer = QTimer(self)
+        self.fleet_sender_timer.setInterval(30000)  # 30 segundos
+        self.fleet_sender_timer.timeout.connect(self.auto_send_scheduled_fleets)
+        self.fleet_sender_timer.start()
+
         self.notified_queues = set()
         self.popups = []
         
@@ -324,7 +330,7 @@ class MainWindow(QMainWindow):
         ships_scroll.setWidgetResizable(True)
         ships_container = QWidget()
         ships_grid = QGridLayout(ships_container)
-        ships_grid.setSpacing(10)
+        ships_grid.setSpacing(1)
         
         # Definir naves con sus IDs (basado en POST de expedición)
         # am### es el ID, nombre es la clave, spinbox es el control
@@ -346,7 +352,6 @@ class MainWindow(QMainWindow):
             "Explorador": {"id": "am219", "spinbox": QSpinBox()}
         }
         
-        # Agregar naves en 2 columnas
         row = 0
         col = 0
         for ship_name, ship_info in self.fleet_ships.items():
@@ -360,11 +365,11 @@ class MainWindow(QMainWindow):
             ship_layout.addWidget(spinbox)
             ship_layout.addStretch()
             
-            # Agregar a la grilla (2 columnas)
+            # Agregar a la grilla (3 columnas)
             ships_grid.addLayout(ship_layout, row, col)
             
             col += 1
-            if col >= 2:  # 2 columnas
+            if col >= 3:
                 col = 0
                 row += 1
         
@@ -610,7 +615,12 @@ class MainWindow(QMainWindow):
             return
         
         try:
-            results = send_scheduled_fleets(self.scheduled_fleets)
+            # Pasar los datos de flotas actuales para "Cuando esté disponible"
+            results = send_scheduled_fleets(
+                self.scheduled_fleets, 
+                profile_path="profile_data",
+                fleets_data=self.fleets_data
+            )
             
             # Contar envíos exitosos
             successful = sum(1 for r in results if r["success"])
@@ -635,6 +645,50 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._notif_label.setText(f"❌ Error ejecutando envíos: {str(e)}")
             print(f"Error en envío de flotas: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def auto_send_scheduled_fleets(self):
+        """Envía automáticamente los envíos de flotas programadas (llamado por timer)"""
+        if not self.scheduled_fleets:
+            return
+        
+        try:
+            # Verificar si hay envíos pendientes
+            pending_fleets = [f for f in self.scheduled_fleets if f.get("status") in ["Pendiente", "Enviada"]]
+            if not pending_fleets:
+                return
+            
+            print(f"\n[AUTO-SEND] Revisando {len(pending_fleets)} envíos programados...")
+            
+            # Pasar los datos de flotas actuales para "Cuando esté disponible"
+            results = send_scheduled_fleets(
+                self.scheduled_fleets, 
+                profile_path="profile_data",
+                fleets_data=self.fleets_data
+            )
+            
+            if results:
+                successful = sum(1 for r in results if r["success"])
+                print(f"[AUTO-SEND] {successful}/{len(results)} envíos ejecutados")
+                
+                # Actualizar lista visual
+                self.fleet_scheduled_list.clear()
+                for fleet in self.scheduled_fleets:
+                    if fleet["status"] == "Completada":
+                        status_icon = "✅"
+                    elif fleet["status"] == "Enviada":
+                        status_icon = "🔄" if fleet.get("repeat_remaining", 0) > 0 else "✅"
+                    else:
+                        status_icon = "⏳"
+                    
+                    repeat_text = f" (x{fleet['repeat_remaining']})" if fleet.get("repeat_remaining", 0) > 0 else ""
+                    entry_text = f"{status_icon} {fleet['mission']} → {fleet['destination']}{repeat_text}"
+                    item = QListWidgetItem(entry_text)
+                    self.fleet_scheduled_list.addItem(item)
+        
+        except Exception as e:
+            print(f"[AUTO-SEND] Error: {str(e)}")
 
     def update_fleet_origin_combo(self):
         """Actualiza el combo de planetas disponibles basado en los datos cargados"""
