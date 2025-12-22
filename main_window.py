@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QFileDialog, QLabel, QTextEdit, QPushButton, QSystemTrayIcon, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QFormLayout, QListWidget,
-    QListWidgetItem, QDateTimeEdit, QScrollArea, QGridLayout
+    QListWidgetItem, QDateTimeEdit, QScrollArea, QGridLayout, QTableWidget, QTableWidgetItem
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
@@ -27,21 +27,37 @@ def extract_debris_list(galaxy_data: dict):
     debris_list = []
 
     for g, systems in galaxy_data.items():
+        # Verificar que systems es un diccionario
+        if not isinstance(systems, dict):
+            continue
+            
         for s, positions in systems.items():
+            # Verificar que positions es un diccionario
+            if not isinstance(positions, dict):
+                continue
+                
             for pos, entry in positions.items():
+                # Verificar que entry es un diccionario
+                if not isinstance(entry, dict):
+                    continue
+                    
                 debris = entry.get("debris")
                 if not debris:
                     continue
 
-                debris_list.append({
-                    "galaxy": int(g),
-                    "system": int(s),
-                    "position": int(pos),
-                    "metal": debris.get("metal", 0),
-                    "crystal": debris.get("crystal", 0),
-                    "deuterium": debris.get("deuterium", 0),
-                    "requiredShips": debris.get("requiredShips")
-                })
+                try:
+                    debris_list.append({
+                        "galaxy": int(g),
+                        "system": int(s),
+                        "position": int(pos),
+                        "metal": int(debris.get("metal", 0)) if isinstance(debris, dict) else 0,
+                        "crystal": int(debris.get("crystal", 0)) if isinstance(debris, dict) else 0,
+                        "deuterium": int(debris.get("deuterium", 0)) if isinstance(debris, dict) else 0,
+                        "requiredShips": debris.get("requiredShips") if isinstance(debris, dict) else None
+                    })
+                except (ValueError, TypeError, AttributeError):
+                    # Ignorar entries con datos malformados
+                    continue
 
     return debris_list
 
@@ -68,25 +84,11 @@ class MainWindow(QMainWindow):
         self.browser_box = QHBoxLayout()
         self.base_url = "https://s163-ar.ogame.gameforge.com/game/index.php"
 
-        # Login: se muestra inicialmente, pero lo ocultaremos automáticamente
-        # después de que open_popup termine. El login se coloca dentro de
-        # un contenedor junto a un botón para mostrar/ocultar.
+        # Login
         self.login = self.web_engine(profile, url)
         if logged :
             self.login.loadFinished.connect(self.on_open)
-        self.left_widget = QWidget()
-        left_layout = QVBoxLayout()
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        self.toggle_login_btn = QPushButton("Ocultar Login")
-        self.toggle_login_btn.clicked.connect(self.toggle_login_visibility)
-        left_layout.addWidget(self.toggle_login_btn)
-        left_layout.addWidget(self.login)
-        self.left_widget.setLayout(left_layout)
-        self.browser_box.addWidget(self.left_widget)
-
-        # Las vistas secundarias (galaxy, fleet, etc.) se crearán después de
-        # que open_popup haya terminado para evitar carga prematura.
-        self.secondary_views_created = False
+        self.browser_box.addWidget(self.login)
         self.browser_tab.setLayout(self.browser_box)
         self.tabs.addTab(self.browser_tab, "🌐 Navegador")
 
@@ -566,9 +568,11 @@ class MainWindow(QMainWindow):
         title.setFont(title_font)
         debris_layout.addWidget(title)
         
-        # Botón para cargar debris desde archivos JSON
-        load_btn = QPushButton("📂 Cargar Datos de Debris")
-        load_btn.setStyleSheet("""
+        # Botones de carga
+        load_buttons_layout = QHBoxLayout()
+        
+        load_all_btn = QPushButton("📂 Recargar Todas las Galaxias")
+        load_all_btn.setStyleSheet("""
             QPushButton {
                 background-color: #0a3a6a;
                 color: #0ff;
@@ -581,30 +585,60 @@ class MainWindow(QMainWindow):
                 background-color: #0a5a9a;
             }
         """)
-        load_btn.clicked.connect(self.load_debris_data)
-        debris_layout.addWidget(load_btn)
+        load_all_btn.clicked.connect(lambda: self.run_galaxy_worker_and_refresh(galaxy_only=None))
+        load_buttons_layout.addWidget(load_all_btn)
+        
+        self.load_single_galaxy_btn = QPushButton("🌍 Recargar Galaxia Seleccionada")
+        self.load_single_galaxy_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3a5a0a;
+                color: #ff0;
+                border: 1px solid #ff0;
+                padding: 6px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #5a7a0f;
+            }
+        """)
+        self.load_single_galaxy_btn.clicked.connect(self.load_selected_galaxy)
+        load_buttons_layout.addWidget(self.load_single_galaxy_btn)
+        
+        load_buttons_layout.addStretch()
+        debris_layout.addLayout(load_buttons_layout)
         
         # Tabla de debris
-        self.debris_list = QListWidget()
-        self.debris_list.setSelectionMode(self.debris_list.SelectionMode.MultiSelection)
+        self.debris_table = QTableWidget()
+        self.debris_table.setColumnCount(7)
+        self.debris_table.setHorizontalHeaderLabels(["Coordenadas", "Metal", "Crystal", "Deuterium", "Total", "Naves", ""])
+        self.debris_table.setSelectionBehavior(self.debris_table.SelectionBehavior.SelectRows)
+        self.debris_table.setSelectionMode(self.debris_table.SelectionMode.MultiSelection)
+        self.debris_table.horizontalHeader().setStretchLastSection(False)
+        self.debris_table.setColumnWidth(0, 100)
+        self.debris_table.setColumnWidth(1, 120)
+        self.debris_table.setColumnWidth(2, 120)
+        self.debris_table.setColumnWidth(3, 120)
+        self.debris_table.setColumnWidth(4, 120)
+        self.debris_table.setColumnWidth(5, 70)
+        self.debris_table.setColumnWidth(6, 30)
         debris_layout.addWidget(QLabel("🎯 Debris Detectados:"))
-        debris_layout.addWidget(self.debris_list)
+        debris_layout.addWidget(self.debris_table)
         
         # Filtros
         filters_group = QGroupBox("🔍 Filtros")
         filters_form = QFormLayout()
         
-        self.debris_min_metal = QSpinBox()
-        self.debris_min_metal.setMinimum(0)
-        self.debris_min_metal.setMaximum(999999999)
-        self.debris_min_metal.setValue(0)
-        filters_form.addRow("Metal mínimo:", self.debris_min_metal)
+        self.debris_resource_type = QComboBox()
+        self.debris_resource_type.addItems(["Todos", "Metal", "Crystal", "Deuterium"])
+        self.debris_resource_type.setCurrentIndex(0)
+        filters_form.addRow("Filtrar por:", self.debris_resource_type)
         
-        self.debris_max_distance = QSpinBox()
-        self.debris_max_distance.setMinimum(1)
-        self.debris_max_distance.setMaximum(9)
-        self.debris_max_distance.setValue(9)
-        filters_form.addRow("Galaxia máxima:", self.debris_max_distance)
+        self.debris_galaxy = QSpinBox()
+        self.debris_galaxy.setMinimum(1)
+        self.debris_galaxy.setMaximum(5)
+        self.debris_galaxy.setValue(5)
+        filters_form.addRow("Galaxia:", self.debris_galaxy)
         
         filters_group.setLayout(filters_form)
         debris_layout.addWidget(filters_group)
@@ -612,7 +646,7 @@ class MainWindow(QMainWindow):
         # Botones de acción
         actions_layout = QHBoxLayout()
         
-        refresh_btn = QPushButton("🔄 Actualizar Lista")
+        refresh_btn = QPushButton("🔄 Actualizar Filtros")
         refresh_btn.setStyleSheet("""
             QPushButton {
                 background-color: #4a6a0a;
@@ -659,18 +693,28 @@ class MainWindow(QMainWindow):
         """Carga datos de debris desde los archivos galaxy_data_g*.json"""
         try:
             combined_data = {}
+            files_loaded = 0
             
             # Cargar datos de todas las galaxias
             for g in range(1, 6):
                 galaxy_file = f"galaxy_data_g{g}.json"
                 if os.path.isfile(galaxy_file):
-                    with open(galaxy_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        combined_data.update(data)
+                    try:
+                        with open(galaxy_file, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            if isinstance(data, dict):
+                                combined_data.update(data)
+                                files_loaded += 1
+                                print(f"✅ Cargado {galaxy_file} ({len(data)} entradas)")
+                    except Exception as e:
+                        print(f"⚠️ Error cargando {galaxy_file}: {e}")
             
             if not combined_data:
-                self._notif_label.setText("⚠️ No se encontraron archivos de galaxia")
+                self._notif_label.setText("⚠️ No se encontraron archivos de galaxia o están vacíos")
                 return
+            
+            print(f"📊 Total de archivos cargados: {files_loaded}")
+            print(f"📊 Total de entradas: {len(combined_data)}")
             
             # Extraer lista de debris
             self.debris_data = extract_debris_list(combined_data)
@@ -678,33 +722,100 @@ class MainWindow(QMainWindow):
             # Ordenar por cantidad de metal descendente
             self.debris_data.sort(key=lambda x: x.get("metal", 0), reverse=True)
             
-            self._notif_label.setText(f"✅ Cargados {len(self.debris_data)} puntos de debris")
+            self._notif_label.setText(f"✅ Cargados {len(self.debris_data)} puntos de debris de {files_loaded} archivo(s)")
+            print(f"✅ Debris extraído: {len(self.debris_data)} puntos")
             self.refresh_debris_list()
             
         except Exception as e:
             self._notif_label.setText(f"❌ Error cargando debris: {str(e)}")
-            print(f"Error: {e}")
+            print(f"❌ Error: {e}")
             import traceback
             traceback.print_exc()
 
+    def run_galaxy_worker_and_refresh(self, galaxy_only=None):
+        """Ejecuta GalaxyWorker para obtener datos de galaxia y luego actualiza la lista de debris
+        
+        Args:
+            galaxy_only: Si es None, escanea todas las galaxias (1-5). Si es un número, escanea solo esa galaxia.
+        """
+        try:
+            self._notif_label.setText("🔄 Explorando galaxias...")
+            
+            # Importar GalaxyWorker desde worker.py
+            from worker import GalaxyWorker
+            
+            # Ejecutar GalaxyWorker para cada galaxia en background usando thread
+            def run_galaxy_workers():
+                try:
+                    galaxies_to_scan = [galaxy_only] if galaxy_only else range(1, 6)
+                    for galaxy_num in galaxies_to_scan:
+                        try:
+                            worker = GalaxyWorker(galaxy_num)
+                            worker.run()
+                            print(f"[GalaxyWorker] Galaxia {galaxy_num} completada")
+                        except Exception as e:
+                            print(f"[GalaxyWorker] Error en galaxia {galaxy_num}: {e}")
+                            import traceback
+                            traceback.print_exc()
+                    
+                    # Después de completar todos, cargar los datos
+                    print("[GalaxyWorker] Todos los procesos completados, cargando datos...")
+                    self.load_debris_data()
+                    self._notif_label.setText("✅ Datos de galaxias cargados")
+                    
+                except Exception as e:
+                    self._notif_label.setText(f"❌ Error en GalaxyWorker: {str(e)}")
+                    print(f"❌ Error: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Ejecutar en thread para no bloquear UI
+            import threading
+            thread = threading.Thread(target=run_galaxy_workers, daemon=True)
+            thread.start()
+            self._notif_label.setText("⏳ Escaneando galaxias...")
+            
+        except Exception as e:
+            self._notif_label.setText(f"❌ Error ejecutando GalaxyWorker: {str(e)}")
+            print(f"❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def load_selected_galaxy(self):
+        """Carga solo la galaxia seleccionada en el filtro"""
+        selected_galaxy = self.debris_galaxy.value()
+        self.run_galaxy_worker_and_refresh(galaxy_only=selected_galaxy)
+
     def refresh_debris_list(self):
-        """Actualiza la lista visual de debris aplicando filtros"""
-        self.debris_list.clear()
+        """Actualiza la tabla visual de debris aplicando filtros"""
+        self.debris_table.setRowCount(0)
         
         if not self.debris_data:
-            self.debris_list.addItem("No hay datos de debris. Carga los archivos primero.")
+            row = self.debris_table.rowCount()
+            self.debris_table.insertRow(row)
+            item = QTableWidgetItem("No hay datos de debris. Carga los archivos primero.")
+            self.debris_table.setItem(row, 0, item)
             return
         
-        min_metal = self.debris_min_metal.value()
-        max_galaxy = self.debris_max_distance.value()
+        resource_type = self.debris_resource_type.currentText()
+        target_galaxy = self.debris_galaxy.value()
         
-        # Filtrar debris
+        # Filtrar debris por galaxia y recurso
         filtered = [
             d for d in self.debris_data
-            if d.get("metal", 0) >= min_metal and d.get("galaxy", 9) <= max_galaxy
+            if d.get("galaxy", 0) == target_galaxy
         ]
         
-        # Mostrar en la lista
+        # Si no es "Todos", filtrar por tipo de recurso
+        if resource_type != "Todos":
+            if resource_type == "Metal":
+                filtered = [d for d in filtered if d.get("metal", 0) > 0]
+            elif resource_type == "Crystal":
+                filtered = [d for d in filtered if d.get("crystal", 0) > 0]
+            elif resource_type == "Deuterium":
+                filtered = [d for d in filtered if d.get("deuterium", 0) > 0]
+        
+        # Mostrar en la tabla
         for debris in filtered:
             g = debris.get("galaxy", 0)
             s = debris.get("system", 0)
@@ -716,16 +827,43 @@ class MainWindow(QMainWindow):
             
             total_resources = metal + crystal + deuterium
             
-            item_text = f"📍 {g}:{s}:{p} | Metal: {cantidad(metal)} | Crystal: {cantidad(crystal)} | Deut: {cantidad(deuterium)} | Total: {cantidad(total_resources)} | Naves: {ships_needed}"
-            item = QListWidgetItem(item_text)
-            item.setData(Qt.ItemDataRole.UserRole, debris)  # Guardar el objeto debris
-            self.debris_list.addItem(item)
+            row = self.debris_table.rowCount()
+            self.debris_table.insertRow(row)
+            
+            # Columna 0: Coordenadas
+            coords_item = QTableWidgetItem(f"{g}:{s}:{p}")
+            self.debris_table.setItem(row, 0, coords_item)
+            
+            # Columna 1: Metal
+            metal_item = QTableWidgetItem(cantidad(metal))
+            metal_item.setData(Qt.ItemDataRole.UserRole, debris)  # Guardar el objeto debris
+            self.debris_table.setItem(row, 1, metal_item)
+            
+            # Columna 2: Crystal
+            crystal_item = QTableWidgetItem(cantidad(crystal))
+            self.debris_table.setItem(row, 2, crystal_item)
+            
+            # Columna 3: Deuterium
+            deut_item = QTableWidgetItem(cantidad(deuterium))
+            self.debris_table.setItem(row, 3, deut_item)
+            
+            # Columna 4: Total
+            total_item = QTableWidgetItem(cantidad(total_resources))
+            self.debris_table.setItem(row, 4, total_item)
+            
+            # Columna 5: Ships
+            ships_item = QTableWidgetItem(str(ships_needed))
+            self.debris_table.setItem(row, 5, ships_item)
+            
+            # Columna 6: Empty (para checkbox si lo necesitamos luego)
+            empty_item = QTableWidgetItem("")
+            self.debris_table.setItem(row, 6, empty_item)
 
     def schedule_recycling_missions(self):
         """Programa misiones de reciclaje para los debris seleccionados"""
-        selected_items = self.debris_list.selectedItems()
+        selected_rows = self.debris_table.selectionModel().selectedRows()
         
-        if not selected_items:
+        if not selected_rows:
             self._notif_label.setText("⚠️ Selecciona al menos un punto de debris")
             return
         
@@ -737,8 +875,10 @@ class MainWindow(QMainWindow):
         # Crear misión de reciclaje para cada debris seleccionado
         missions_created = 0
         
-        for item in selected_items:
-            debris = item.data(Qt.ItemDataRole.UserRole)
+        for row in selected_rows:
+            # Obtener el debris desde la columna 1 (Metal) donde está guardado
+            item = self.debris_table.item(row, 1)
+            debris = item.data(Qt.ItemDataRole.UserRole) if item else None
             if not debris:
                 continue
             
@@ -772,7 +912,7 @@ class MainWindow(QMainWindow):
             self._notif_label.setText(f"✅ {missions_created} misiones de reciclaje programadas")
         
         # Limpiar selección
-        self.debris_list.clearSelection()
+        self.debris_table.selectionModel().clearSelection()
 
     def on_fleet_mission_changed(self, mission_text):
         """Actualiza opciones según la misión seleccionada"""
@@ -979,7 +1119,7 @@ class MainWindow(QMainWindow):
             return
         
         # Cargar datos en el formulario
-        self.fleet_mission_combo.setCurrentText(fleet.get("mission", "Expedición"))
+        self.fleet_mission_combo.setCurrentText(fleet.get("mission", ""))
         self.fleet_planet_combo.setCurrentText(fleet.get("origin", ""))
         
         # Extraer coordenadas
@@ -1360,10 +1500,8 @@ class MainWindow(QMainWindow):
             print("[DEBUG] Primer planeta cargado, iniciando carga de otros planetas...")
             self.tabs.setCurrentWidget(self.main_panel)
             self.login.hide()
-            self.left_widget.setFixedWidth(55)
-            self.toggle_login_btn.setText("Mostrar\nLogin")
             #try:
-            self.create_secondary_views()
+            #    self.create_secondary_views()
             #except Exception as e:
                 #print("[DEBUG] Error creando vistas secundarias:", e)
 
@@ -1373,62 +1511,6 @@ class MainWindow(QMainWindow):
             # Inicializar combo de planetas después que se carguen datos
             QTimer.singleShot(5000, self.update_fleet_origin_combo)
         QTimer.singleShot(3000, lambda: self.login.page().runJavaScript(js, done))
-
-    def create_secondary_views(self):
-        """Crea y añade `galaxy` y `fleet` al layout si no existen todavía."""
-        if getattr(self, 'secondary_views_created', False):
-            return
-
-        self.galaxy_box = QVBoxLayout()
-        self.galaxy_debug = QTextEdit()
-        
-        # Iniciar 5 instancias de worker.py (una para cada galaxia)
-        for galaxy_num in range(1, 6):
-            subprocess.Popen([sys.executable, "worker.py", str(galaxy_num)])
-            self.galaxy_debug.append(f"[Galaxy {galaxy_num}] Proceso iniciado")
-        
-        self.galaxy_box.addWidget(self.galaxy_debug)
-        self.browser_box.addLayout(self.galaxy_box)
-        
-        # Intentar cargar datos si existen
-        try:
-            # Combinar datos de todas las galaxias
-            combined_data = {}
-            for g in range(1, 6):
-                galaxy_file = f"galaxy_data_g{g}.json"
-                if os.path.isfile(galaxy_file):
-                    with open(galaxy_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        combined_data.update(data)
-            
-            if combined_data:
-                debris = extract_debris_list(combined_data)
-                debris.sort("requiredShips")
-                print(debris[:5])
-        except Exception as e:
-            print(f"[DEBUG] No se pudieron cargar datos de galaxias: {e}")
-
-        self.fleet = self.web_engine(self.profile, f"{self.base_url}&component=movement")
-        self.fleet.loadFinished.connect(lambda: self.div_middle(self.fleet))
-        self.browser_box.addWidget(self.fleet)
-
-        self.secondary_views_created = True
-        print("[DEBUG] Vistas secundarias creadas: galaxy, fleet")
-
-    def toggle_login_visibility(self):
-        """Muestra/oculta la vista de login y actualiza el texto del botón."""
-        try:
-            if getattr(self, 'login', None) and self.login.isVisible():
-                self.login.hide()
-                self.left_widget.setFixedWidth(55)
-                self.toggle_login_btn.setText("Mostrar\nLogin")
-            else:
-                if getattr(self, 'login', None):
-                    self.login.show()
-                self.left_widget.setFixedWidth(150)
-                self.toggle_login_btn.setText("Ocultar Login")
-        except Exception as e:
-            print("[DEBUG] Error toggling login visibility:", e)
 
     def div_middle(self, webview):
         """Muestra solo el div middle en el QWebEngineView dado"""
@@ -1759,14 +1841,14 @@ class MainWindow(QMainWindow):
                 # Mostrar lunas si existen
                 moons = pdata.get("moons", {})
                 if moons:
-                    html += "<div class='moon-section'>"
                     for moon_key, moon_data in moons.items():
-                        moon_name = moon_data.get("name", "Moon")
                         moon_resources = moon_data.get("resources", {})
                         moon_cant = moon_resources.get(rkey, 0)
-                        html += f"🌙 {moon_name}: {cantidad(moon_cant)}"
-                    html += "</div>"
-                
+                        if moon_cant>0:
+                            html += "<div class='moon-section'>"
+                            moon_name = moon_data.get("name", "Moon")
+                            html += f"🌙 {moon_name}: {cantidad(moon_cant)}"
+                            html += "</div>"
                 html += "</td>"
 
             html += "</tr>"
