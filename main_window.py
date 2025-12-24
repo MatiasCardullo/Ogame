@@ -222,33 +222,28 @@ class MainWindow(QMainWindow):
 
         # Intervalo de actualización (en ms)
         self.current_update_interval = 30000  # Default: 30 segundos
-
-        # Timers
-        self.timer_global = QTimer(self)
-        self.timer_global.setInterval(self.current_update_interval)
-        self.timer_global.timeout.connect(self.increment_all_planets)
-        self.timer_global.start()
-
-        self.queue_timer = QTimer(self)
-        self.queue_timer.setInterval(self.current_update_interval)
-        self.queue_timer.timeout.connect(self.check_queues)
-        self.queue_timer.start()
-
-        # Panel refresh timer (usa el intervalo también)
         self.panel_timer = QTimer(self)
         self.panel_timer.setInterval(self.current_update_interval)
         self.panel_timer.timeout.connect(self.refresh_main_panel)
         self.panel_timer.start()
 
+        # Timers
+        self.timer_global = QTimer(self)
+        self.timer_global.setInterval(1000)
+        self.timer_global.timeout.connect(self.increment_all_planets)
+        self.timer_global.start()
+        self.queue_timer = QTimer(self)
+        self.queue_timer.setInterval(1000)
+        self.queue_timer.timeout.connect(self.check_queues)
+        self.queue_timer.start()
         # Fleet update timer
         self.fleet_timer = QTimer(self)
         self.fleet_timer.setInterval(60000)
         self.fleet_timer.timeout.connect(self.update_fleets)
         self.fleet_timer.start()
 
-        # Fleet sender timer (ejecutar envíos cada 30 segundos)
         self.fleet_sender_timer = QTimer(self)
-        self.fleet_sender_timer.setInterval(30000)  # 30 segundos
+        self.fleet_sender_timer.setInterval(5000)
         self.fleet_sender_timer.timeout.connect(self.auto_send_scheduled_fleets)
         self.fleet_sender_timer.start()
 
@@ -264,12 +259,7 @@ class MainWindow(QMainWindow):
         # Envíos programados de naves
         self.scheduled_fleets = []
         self.load_scheduled_fleets()
-    
-    def closeEvent(self, event):
-        """Guardar datos al cerrar la aplicación"""
-        self.save_scheduled_fleets()
-        super().closeEvent(event)
-    
+        
     def load_scheduled_fleets(self):
         """Carga las misiones programadas desde un archivo JSON"""
         try:
@@ -291,6 +281,34 @@ class MainWindow(QMainWindow):
                 print(f"✅ Guardadas {len(self.scheduled_fleets)} misiones programadas")
         except Exception as e:
             print(f"⚠️ Error guardando misiones: {e}")
+    
+    def load_planets_data(self):
+        """Carga los datos de planetas desde un archivo JSON"""
+        try:
+            if os.path.exists("planets_data.json"):
+                with open("planets_data.json", "r", encoding="utf-8") as f:
+                    self.planets_data = json.load(f)
+                    print(f"✅ Cargados datos de {len(self.planets_data)} planetas/lunas desde cache")
+                    # Actualizar el combo de planetas y panel
+                    if hasattr(self, 'fleet_planet_combo'):
+                        self.update_fleet_origin_combo()
+                    if hasattr(self, 'main_panel'):
+                        self.refresh_main_panel()
+                    return True
+            return False
+        except Exception as e:
+            print(f"⚠️ Error cargando datos de planetas: {e}")
+            return False
+    
+    def save_planets_data(self):
+        """Guarda los datos de planetas en un archivo JSON"""
+        try:
+            if self.planets_data:
+                with open("planets_data.json", "w", encoding="utf-8") as f:
+                    json.dump(self.planets_data, f, indent=2, ensure_ascii=False)
+                    print(f"✅ Guardados datos de {len(self.planets_data)} planetas/lunas en cache")
+        except Exception as e:
+            print(f"⚠️ Error guardando datos de planetas: {e}")
 
     def web_engine(self, profile, url):
         web = QWebEngineView()
@@ -484,24 +502,6 @@ class MainWindow(QMainWindow):
         history_label = QLabel("📜 Misiones Programadas:")
         history_label.setStyleSheet("font-weight: bold; margin-top: 15px;")
         scheduler_layout.addWidget(history_label)
-        
-        # Botón para ejecutar envíos
-        execute_btn = QPushButton("🚀 Ejecutar Envíos Pendientes")
-        execute_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0a3a6a;
-                color: #0ff;
-                border: 1px solid #0ff;
-                padding: 6px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #0a5a9a;
-            }
-        """)
-        execute_btn.clicked.connect(self.on_execute_scheduled_fleets)
-        scheduler_layout.addWidget(execute_btn)
         
         self.fleet_scheduled_list = QListWidget()
         self.fleet_scheduled_list.setMaximumHeight(120)
@@ -1040,35 +1040,6 @@ class MainWindow(QMainWindow):
         self.fleet_timing_combo.setCurrentIndex(0)
         self.fleet_send_time.setDateTime(QDateTime.currentDateTime())
 
-    def on_execute_scheduled_fleets(self):
-        """Ejecuta los envíos de flotas programadas"""
-        if not self.scheduled_fleets:
-            self._notif_label.setText("⚠️ No hay envíos programados")
-            return
-        
-        try:
-            # Pasar los datos de flotas actuales para "Cuando esté disponible"
-            results = send_scheduled_fleets(
-                self.scheduled_fleets, 
-                profile_path="profile_data",
-                fleets_data=self.fleets_data
-            )
-            
-            # Contar envíos exitosos
-            successful = sum(1 for r in results if r["success"])
-            
-            # Actualizar lista visual
-            self._refresh_scheduled_fleets_list()
-            self.save_scheduled_fleets()
-            
-            self._notif_label.setText(f"✅ {successful}/{len(results)} envíos ejecutados")
-        
-        except Exception as e:
-            self._notif_label.setText(f"❌ Error ejecutando envíos: {str(e)}")
-            print(f"Error en envío de flotas: {e}")
-            import traceback
-            traceback.print_exc()
-
     def auto_send_scheduled_fleets(self):
         """Envía automáticamente los envíos de flotas programadas (llamado por timer)"""
         if not self.scheduled_fleets:
@@ -1076,11 +1047,9 @@ class MainWindow(QMainWindow):
         
         try:
             # Verificar si hay envíos pendientes
-            pending_fleets = [f for f in self.scheduled_fleets if f.get("status") in ["Pendiente", "Enviada"]]
+            pending_fleets = [f for f in self.scheduled_fleets if f.get("status") in ["Pendiente"]]
             if not pending_fleets:
                 return
-            
-            print(f"\n[AUTO-SEND] Revisando {len(pending_fleets)} envíos programados...")
             
             # Pasar los datos de flotas actuales para "Cuando esté disponible"
             results = send_scheduled_fleets(
@@ -1185,20 +1154,32 @@ class MainWindow(QMainWindow):
         self.fleet_planet_combo.clear()
         self.fleet_planet_combo.addItem("Seleccionar planeta...")
         
-        # Agregar todos los planetas disponibles
-        for planet_key in sorted(self.planets_data.keys()):
-            pdata = self.planets_data[planet_key]
+        # Crear lista de planetas ordenada por coordenadas
+        planet_list = []
+        for planet_id, pdata in self.planets_data.items():
+            name = pdata.get("name", "Unknown")
             coords = pdata.get("coords", "0:0:0")
-            
-            # Obtener nombre del planeta desde la clave
-            if '|' in planet_key:
-                name = planet_key.split('|')[0]
-            else:
-                name = planet_key
-            
+            planet_list.append((name, coords, planet_id))
+        
+        # Ordenar por coordenadas
+        def coords_sort_key(item):
+            name, coords, pid = item
+            try:
+                parts = coords.split(":")
+                g = int(parts[0]) if len(parts) > 0 else 0
+                s = int(parts[1]) if len(parts) > 1 else 0
+                p = int(parts[2]) if len(parts) > 2 else 0
+                return (g, s, p)
+            except (ValueError, IndexError):
+                return (0, 0, 0)
+        
+        planet_list.sort(key=coords_sort_key)
+        
+        # Agregar todos los planetas disponibles
+        for name, coords, planet_id in planet_list:
             # Formato: "Nombre (Coordenadas)"
             display_text = f"{name} ({coords})"
-            self.fleet_planet_combo.addItem(display_text, planet_key)
+            self.fleet_planet_combo.addItem(display_text, planet_id)
         
         # Restaurar selección anterior si existe
         if current_text and current_text != "Seleccionar planeta...":
@@ -1215,8 +1196,6 @@ class MainWindow(QMainWindow):
             # Actualizar timers
             if hasattr(self, 'timer_global'):
                 self.timer_global.setInterval(new_interval)
-            if hasattr(self, 'queue_timer'):
-                self.queue_timer.setInterval(new_interval)
             if hasattr(self, 'panel_timer'):
                 self.panel_timer.setInterval(new_interval)
             
@@ -1255,14 +1234,16 @@ class MainWindow(QMainWindow):
         universe = data.get('ogame-universe-name', '—')
         coords = data.get('ogame-planet-coordinates', '—')
         planet = data.get('ogame-planet-name', '—')
-        
+        planet_id = data.get('ogame-planet-id', None)  # Debe venir del JS
+
         # Detectar si es luna (probablemente el nombre contenga "Moon" o similar)
         is_moon = 'moon' in planet.lower() if planet else False
-        
+
         self.current_main_web_planet = planet
         self.current_main_web_coords = coords
         self.current_main_web_is_moon = is_moon
-        
+        self.current_main_web_planet_id = planet_id
+
         # Extraer recursos
         self.main_web.page().runJavaScript(extract_resources_script, self.handle_main_web_resources)
 
@@ -1497,7 +1478,7 @@ class MainWindow(QMainWindow):
         })();
         """
         def done(result):
-            print("[DEBUG] Primer planeta cargado, iniciando carga de otros planetas...")
+            print("[DEBUG] Primer planeta cargado, comprobando cache de planetas...")
             self.tabs.setCurrentWidget(self.main_panel)
             self.login.hide()
             #try:
@@ -1505,7 +1486,16 @@ class MainWindow(QMainWindow):
             #except Exception as e:
                 #print("[DEBUG] Error creando vistas secundarias:", e)
 
-            QTimer.singleShot(1000, self.load_other_planets)
+            # Intentar cargar datos de planetas desde cache
+            cache_loaded = self.load_planets_data()
+            
+            if not cache_loaded:
+                # Si no hay cache, cargar planetas desde el navegador
+                print("[DEBUG] Cache no encontrado, cargando planetas desde navegador...")
+                QTimer.singleShot(1000, self.load_other_planets)
+            else:
+                print("[DEBUG] ✅ Datos de planetas cargados desde cache")
+            
             # Actualizar flotas inicialmente
             QTimer.singleShot(2000, self.update_fleets)
             # Inicializar combo de planetas después que se carguen datos
@@ -1523,9 +1513,7 @@ class MainWindow(QMainWindow):
         """
         webview.page().runJavaScript(js)
     
-    # ====================================================================
-    #  CARGAR OTROS PLANETAS
-    # ====================================================================
+
     def load_other_planets(self):
         """Busca los enlaces de otros planetas en main_web y los carga secuencialmente."""
         
@@ -1638,10 +1626,11 @@ class MainWindow(QMainWindow):
         moon_name = moon.get('name', 'Moon')
         
         # Guardar la referencia al planeta padre antes de cargar la luna
-        self.current_planet_parent_key = self._get_planet_key(
-            self.current_main_web_planet,
-            self.current_main_web_coords
-        )
+        # Usar el mismo sistema de ID que en update_planet_data
+        import hashlib
+        parent_coords = self.current_main_web_coords
+        parent_id = hashlib.sha1(parent_coords.encode("utf-8")).hexdigest()[:16]
+        self.current_planet_parent_key = parent_id
         
         # Construir URL usando moon_id
         moon_url = f"{self.base_url}?page=ingame&component=overview&cp={moon_id}"
@@ -1669,9 +1658,6 @@ class MainWindow(QMainWindow):
             print('[DEBUG] Error cargando luna en main_web:', e)
             QTimer.singleShot(1000, finish_and_next)
 
-    # ====================================================================
-    #  FLEETS
-    # ====================================================================
     def update_fleets(self):
         """Actualiza el estado de flotas en movimiento"""
         try:
@@ -1682,7 +1668,7 @@ class MainWindow(QMainWindow):
             if result.get("success"):
                 self.fleets_data = result.get("fleets", [])
                 self.last_fleet_update = result.get("timestamp", time.time())
-                print(f"[FLEETS] Actualizadas {len(self.fleets_data)} flotas activas")
+                #print(f"[FLEETS] Actualizadas {len(self.fleets_data)} flotas activas")
                 self.refresh_main_panel()
             else:
                 print(f"[FLEETS] Error: {result.get('error', 'Unknown')}")
@@ -1753,15 +1739,26 @@ class MainWindow(QMainWindow):
             barra = barra_html(progress, 100, color, 50)
             return f"{barra} {name} [{progress:.2f}%] ({time})"
         
-        # Extraer solo planetas (no lunas) para las columnas
+        # Extraer solo planetas (no lunas) para las columnas, ordenados por coordenadas
         planet_info = []
-        for key in self.planets_data.keys():
-            parts = key.rsplit('|', 1)
-            if len(parts) == 2:
-                name, coords = parts
-                planet_info.append((name, coords, key))
-            else:
-                planet_info.append((key, "0:0:0", key))
+        for planet_id, pdata in self.planets_data.items():
+            name = pdata.get("name", "")
+            coords = pdata.get("coords", "")
+            planet_info.append((name, coords, planet_id))
+        
+        # Ordenar por coordenadas (G:S:P)
+        def coords_sort_key(item):
+            name, coords, pid = item
+            try:
+                parts = coords.split(":")
+                g = int(parts[0]) if len(parts) > 0 else 0
+                s = int(parts[1]) if len(parts) > 1 else 0
+                p = int(parts[2]) if len(parts) > 2 else 0
+                return (g, s, p)
+            except (ValueError, IndexError):
+                return (0, 0, 0)
+        
+        planet_info.sort(key=coords_sort_key)
         
         now = int(time.time())
 
@@ -1801,7 +1798,8 @@ class MainWindow(QMainWindow):
         # ----- Tabla recursos + colas por planeta
         html += "<table><tr><th>Recurso</th>"
         for name, coords, key in planet_info:
-            html += f"<th>{name}<br><small>{coords}</small></th>"
+            if not coords == "":
+                html += f"<th>{name}<br><small>{coords}</small></th>"
         html += "</tr>"
 
         resource_names = ["Metal", "Cristal", "Deuterio", "Energía"]
@@ -1814,14 +1812,13 @@ class MainWindow(QMainWindow):
 
         for rname, spec in zip(resource_names, resource_specs):
             rkey, capkey, prodkey, color = spec
-            html += f"<tr><td><b>{rname}</b></td>"
-
+            aux = f"<tr><td><b>{rname}</b></td>"
             for name, coords, key in planet_info:
                 pdata = self.planets_data[key]
                 r = pdata["resources"]
 
                 if rkey == "energy":
-                    html += f"<td>⚡ {r.get('energy', 0)}</td>"
+                    aux += f"<td>⚡ {r.get('energy', 0)}</td>"
                     continue
 
                 cant = r.get(rkey, 0)
@@ -1836,7 +1833,7 @@ class MainWindow(QMainWindow):
                     full = f" - almacenes llenos!!!"
                 char = progress_color((cant / cap) * 100)
                 barra = barra_html(cant, cap, color, 19) + f"<span style='color:{char};'>{'█'}</span>"
-                html += f"<td>{cantidad(cant)} {full}<br>{barra}"
+                aux += f"<td>{cantidad(cant)} {full}<br>{barra}"
                 
                 # Mostrar lunas si existen
                 moons = pdata.get("moons", {})
@@ -1845,12 +1842,13 @@ class MainWindow(QMainWindow):
                         moon_resources = moon_data.get("resources", {})
                         moon_cant = moon_resources.get(rkey, 0)
                         if moon_cant>0:
-                            html += "<div class='moon-section'>"
+                            aux += "<div class='moon-section'>"
                             moon_name = moon_data.get("name", "Moon")
-                            html += f"🌙 {moon_name}: {cantidad(moon_cant)}"
-                            html += "</div>"
-                html += "</td>"
-
+                            aux += f"🌙 {moon_name}: {cantidad(moon_cant)}"
+                            aux += "</div>"
+                aux += "</td>"
+                
+            html += aux
             html += "</tr>"
 
         # ----- Colas (no investigación) — agrupar por tipo y mostrar por planeta
@@ -1982,7 +1980,6 @@ class MainWindow(QMainWindow):
         
         self.fleets_label.setHtml(html)
 
-
     # ====================================================================
     #  UPDATE PLANET DATA (API nueva con queues que incluyen id)
     # ====================================================================
@@ -2001,12 +1998,11 @@ class MainWindow(QMainWindow):
         if "last_update" not in resources:
             resources["last_update"] = time.time()
 
-        # Usar el ID del planeta como clave única para evitar duplicados
+        # Usar el planet_id real de OGame
         planet_id = getattr(self, 'current_main_web_planet_id', None)
-        
-        # Si no tenemos ID, generar uno basado en coords (fallback)
         if not planet_id:
-            planet_id = self._get_planet_key(planet_name, coords)
+            # Fallback: usar coords como id si no hay planet_id
+            planet_id = coords
         
         # Filtrar las queues: solo edificios para lunas
         qlist = []
@@ -2052,39 +2048,37 @@ class MainWindow(QMainWindow):
             if parent_planet_key not in self.planets_data:
                 # Si el planeta padre no existe aún, crear un placeholder
                 self.planets_data[parent_planet_key] = {
-                    "planet_id": parent_planet_key,
+                    "id": parent_planet_key,
+                    "name": "",
                     "coords": "",
                     "resources": {},
                     "queues": [],
                     "moons": {}
                 }
-            
             # Inicializar estructura de moons si no existe
             if "moons" not in self.planets_data[parent_planet_key]:
                 self.planets_data[parent_planet_key]["moons"] = {}
-            
-            # Guardar luna dentro del planeta usando su ID como clave
+            # Guardar luna dentro del planeta usando su planet_id real
             self.planets_data[parent_planet_key]["moons"][planet_id] = {
+                "id": planet_id,
                 "name": planet_name,
                 "coords": coords,
                 "resources": resources,
                 "queues": qlist,
-                "last_update": time.time(),
-                "planet_id": planet_id
+                "last_update": time.time()
             }
         else:
             # Guardar planeta normalmente
             pdata = self.planets_data.get(planet_id, {})
-            pdata["planet_id"] = planet_id
+            pdata["id"] = planet_id
+            pdata["name"] = planet_name
             pdata["coords"] = coords
             pdata["resources"] = resources
             pdata["queues"] = qlist
             pdata["last_update"] = time.time()
-            
             # Asegurar que existe la estructura de moons
             if "moons" not in pdata:
                 pdata["moons"] = {}
-            
             self.planets_data[planet_id] = pdata
 
         # Refrescar UI
@@ -2112,11 +2106,6 @@ class MainWindow(QMainWindow):
             r["metal"] += r.get("prod_metal", 0) * elapsed
             r["crystal"] += r.get("prod_crystal", 0) * elapsed
             r["deuterium"] += r.get("prod_deuterium", 0) * elapsed
-
-        try:
-            self.refresh_main_panel()
-        except Exception as e:
-            print(e)
 
     # ====================================================================
     #  CHECK QUEUES GLOBALES (notificaciones)
@@ -2236,3 +2225,9 @@ class MainWindow(QMainWindow):
             #QTimer.singleShot(8000, lambda: self._notif_label.setText(""))
         except Exception as e:
             print("[DEBUG] Error al mostrar notificación:", e)
+
+    def closeEvent(self, event):
+        """Guardar datos al cerrar la aplicación"""
+        self.save_scheduled_fleets()
+        self.save_planets_data()
+        super().closeEvent(event)

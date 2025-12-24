@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from worker import load_ogame_session
 from typing import Optional
 
+MAX_EXPEDITIONS = 5
+
 # Cache global para el token AJAX
 _token_cache = {
     "token": None,
@@ -193,12 +195,12 @@ def send_fleet(fleet_data, profile_path="profile_data"):
         if total_ships == 0:
             return False, "No hay naves para enviar"
         
+        # TO DO pasar el id del planeta
         # URL del endpoint - IMPORTANTE: incluir &ajax=1&asJson=1 para JSON response
-        url = "https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame&component=fleetdispatch&action=sendFleet&ajax=1&asJson=1"
-        
+        url = "https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame&component=fleetdispatch&cp=33620393&action=sendFleet&ajax=1&asJson=1"
         # Actualizar Referer para que sea realista
         session.headers.update({
-            "Referer": f"https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame&component=fleetdispatch&mission={mission_id}&position={p}&type=1&galaxy={g}&system={s}"
+            "Referer": f"https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame&component=fleetdispatch&cp=33620393&mission={mission_id}&position={p}&type=1&galaxy={g}&system={s}"
         })
         
         print(f"[FLEET] Enviando {total_ships} naves a {g}:{s}:{p}")
@@ -259,56 +261,70 @@ def send_fleet(fleet_data, profile_path="profile_data"):
 
 def send_scheduled_fleets(scheduled_fleets, profile_path="profile_data", fleets_data=None):
     """
-    Envía múltiples flotas programadas
+    Envía múltiples flotas programadas respetando el límite de expediciones
     """
     results = []
     current_time = time.time()
-    
-    for fleet in scheduled_fleets:
-        # Saltar si ya fue completada
-        if fleet.get("status") == "Completada":
-            continue
-        
-        # Si ya fue enviada y aún hay repeticiones, esperar antes de la siguiente
-        if fleet.get("status") == "Enviada" and fleet.get("repeat_remaining", 0) > 0:
-            fleet["status"] = "Pendiente"
-        elif fleet.get("status") == "Enviada":
-            continue
-        
-        # Verificar si es hora de enviar
-        timing_type = fleet.get("timing_type", "Enviar ahora")
-        should_send = False
-        
-        if timing_type == "Enviar ahora":
-            should_send = True
-        elif timing_type == "Cuando esté disponible":
-            # "Cuando esté disponible" = enviar todas las expediciones programadas en secuencia
-            # sin restricciones. Simplemente envíalas una tras otra.
-            should_send = True
-        elif timing_type == "Programar hora específica":
-            scheduled_time = fleet.get("scheduled_time", 0)
-            should_send = current_time >= scheduled_time
-        
-        if should_send:
+
+    # ---- contar expediciones activas ----
+    active_expeditions = 0
+    if fleets_data:
+        active_expeditions = sum(
+            1 for f in fleets_data
+            if f.get("mission_name", "").lower() == "expedición"
+            and f.get("return_flight", True)
+        )
+        for fleet in scheduled_fleets:
+            # Saltar si ya fue completada
+            if fleet.get("status") == "Completada":
+                continue
+
+            if fleet.get("status") == "Enviada" and fleet.get("repeat_remaining", 0) > 0:
+                fleet["status"] = "Pendiente"
+            elif fleet.get("status") == "Enviada":
+                continue
+            
+            # Verificar si es hora de enviar
+            timing_type = fleet.get("timing_type", "Enviar ahora")
+            should_send = False
+            
+            if timing_type == "Enviar ahora":
+                should_send = True
+
+            elif timing_type == "Programar hora específica":
+                scheduled_time = fleet.get("scheduled_time", 0)
+                should_send = current_time >= scheduled_time
+
+            elif timing_type == "Cuando esté disponible":
+                # Solo expediciones respetan el límite
+                if fleet.get("mission", "").lower() == "expedición":
+                    should_send = active_expeditions < MAX_EXPEDITIONS
+                else:
+                    should_send = True
+
+            # ---------------- enviar ----------------
+            if not should_send:
+                continue
+
             print(f"\n{'='*60}")
             print(f"Enviando flota: {fleet.get('mission')} → {fleet.get('destination')}")
+            print(f"Expediciones activas: {active_expeditions}/{MAX_EXPEDITIONS}")
             print(f"{'='*60}")
-            
+
             success, message = send_fleet(fleet, profile_path)
-            
+
             if success:
-                fleet["status"] = "Enviada"
                 fleet["repeat_remaining"] = fleet.get("repeat_remaining", 1) - 1
-                
+
                 if fleet["repeat_remaining"] <= 0:
-                    fleet["status"] = "Completada"
-                    print(f"✅ Flota completada")
+                    if timing_type == "Cuando esté disponible":
+                        fleet["status"] = "Pendiente"
+                        fleet["repeat_remaining"] = fleet["repeat_count"]
+                    else:
+                        fleet["status"] = "Completada"
                 else:
-                    print(f"🔄 Repetición: {fleet['repeat_remaining']} restantes")
-                
-                # Esperar entre envíos
-                time.sleep(1)
-            
+                    print(f"🔄 Repeticiones restantes: {fleet['repeat_remaining']}")
+
             results.append({
                 "fleet_id": fleet.get("id"),
                 "mission": fleet.get("mission"),
@@ -316,5 +332,5 @@ def send_scheduled_fleets(scheduled_fleets, profile_path="profile_data", fleets_
                 "success": success,
                 "message": message
             })
-    
+
     return results
