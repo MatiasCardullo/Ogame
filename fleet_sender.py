@@ -296,7 +296,6 @@ def send_scheduled_fleets(scheduled_fleets, profile_path="profile_data", fleets_
                 should_send = current_time >= scheduled_time
 
             elif timing_type == "Cuando esté disponible":
-                # Solo expediciones respetan el límite
                 if fleet.get("mission", "").lower() == "expedición":
                     should_send = active_expeditions < MAX_EXPEDITIONS
                 else:
@@ -312,18 +311,19 @@ def send_scheduled_fleets(scheduled_fleets, profile_path="profile_data", fleets_
             print(f"{'='*60}")
 
             success, message = send_fleet(fleet, profile_path)
-
             if success:
+                if fleet.get("mission", "").lower() == "expedición":
+                    active_expeditions += 1
                 fleet["repeat_remaining"] = fleet.get("repeat_remaining", 1) - 1
-
-                if fleet["repeat_remaining"] <= 0:
-                    if timing_type == "Cuando esté disponible":
-                        fleet["status"] = "Pendiente"
-                        fleet["repeat_remaining"] = fleet["repeat_count"]
-                    else:
-                        fleet["status"] = "Completada"
+                while(fleet["repeat_remaining"] > 0 and active_expeditions < MAX_EXPEDITIONS):
+                    success, message = send_fleet(fleet, profile_path)
+                    if success and fleet.get("mission", "").lower() == "expedición":
+                        active_expeditions += 1
+                if timing_type == "Cuando esté disponible":
+                    fleet["status"] = "Pendiente"
+                    fleet["repeat_remaining"] = fleet["repeat_count"]
                 else:
-                    print(f"🔄 Repeticiones restantes: {fleet['repeat_remaining']}")
+                    fleet["status"] = "Completada"
 
             results.append({
                 "fleet_id": fleet.get("id"),

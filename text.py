@@ -17,7 +17,7 @@ def tiempo_lleno(cant, cap, prod):
         t = (cap - cant) / (prod * 3600)
         if t < 1.6:
             return f"{int(t*60)} minutos"
-        elif t >72:
+        elif t > 72:
             return f"{int(t/24)} dias"
         else:
             return f"{int(t)} horas"
@@ -38,6 +38,7 @@ def time_str(t, not_seconds = False):
         if d > 0: parts.append(f"{d}d")
         if h > 0: parts.append(f"{h}h")
         if m > 0: parts.append(f"{m}m")
+        elif len(parts) == 0: parts.append("<1m")
         time = " ".join(parts)
     else:
         if h > 0:

@@ -136,6 +136,8 @@ def parse_fleet_response(html_text):
         mission_types = {
             1: "Desplegar",
             3: "Transportar",
+            4: "Desplegar",
+            6: "Espionaje",
             8: "Recolectar",
             15: "Expedición",
             18: "Lifeform"
@@ -289,8 +291,8 @@ class GalaxyWorker:
             print(f"G:{g} S:{s}")
             if parsed:
                 data[str(g)][str(s)] = parsed
-                time.sleep(0.7)
-            time.sleep(0.3)
+                time.sleep(0.5)
+            time.sleep(0.1)
         data["time"] = time.time()
         # Guardar en archivo específico para esta galaxia
         output_file = f"galaxy_data_g{g}.json"

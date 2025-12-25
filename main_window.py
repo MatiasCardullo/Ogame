@@ -106,8 +106,8 @@ class MainWindow(QMainWindow):
         # Contenedor horizontal para sprite_widget + QWebEngineView
         top_container = QWidget()
         top_layout = QHBoxLayout()
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(5)
+        #top_layout.setContentsMargins(0, 0, 0, 0)
+        #top_layout.setSpacing(1)
         
         self.sprite_widget = SpriteWidget()
         top_layout.addWidget(self.sprite_widget, 1)  # stretch factor = 1 para que ocupe espacio disponible
@@ -116,7 +116,7 @@ class MainWindow(QMainWindow):
         self.web_layout = QVBoxLayout()
         self.main_web = self.web_engine(self.profile, self.base_url)
         self.main_web.setZoomFactor(0.7)
-        self.main_web.setMinimumWidth(800)
+        self.main_web.setMinimumWidth(1000)
         self.toolbar = QHBoxLayout()
         for text, func in [("<", self.main_web.back), (">", self.main_web.forward), ("↻", self.main_web.reload), ("💾", self.save_html)]:
             btn = QPushButton(text)
@@ -138,9 +138,10 @@ class MainWindow(QMainWindow):
         update_interval_layout.addWidget(QLabel("⏱️ Intervalo de actualización:"))
         self.update_interval_combo = QComboBox()
         self.update_interval_combo.addItem("1 segundo", 1000)
+        self.update_interval_combo.addItem("10 segundo", 10000)
         self.update_interval_combo.addItem("30 segundos", 30000)
         self.update_interval_combo.addItem("1 minuto", 60000)
-        self.update_interval_combo.setCurrentIndex(1)  # Default: 30 segundos
+        self.update_interval_combo.setCurrentIndex(0)  # Default: 1 segundos
         self.update_interval_combo.currentIndexChanged.connect(self.on_update_interval_changed)
         update_interval_layout.addWidget(self.update_interval_combo)
         update_interval_layout.addStretch()
@@ -218,10 +219,10 @@ class MainWindow(QMainWindow):
         # Esto permite tener múltiples planetas con el mismo nombre pero diferentes coordenadas
         self.planets_data = {}
         # global queues (research, etc.) keyed by queue id
-        self.global_queues = {}
+        self.research_data = {}
 
         # Intervalo de actualización (en ms)
-        self.current_update_interval = 30000  # Default: 30 segundos
+        self.current_update_interval = 1000  # Default: 1 segundos
         self.panel_timer = QTimer(self)
         self.panel_timer.setInterval(self.current_update_interval)
         self.panel_timer.timeout.connect(self.refresh_main_panel)
@@ -282,13 +283,17 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"⚠️ Error guardando misiones: {e}")
     
-    def load_planets_data(self):
-        """Carga los datos de planetas desde un archivo JSON"""
+    def load_data(self):
+        """Carga los datos de planetas e investigaciones desde JSON"""
         try:
+            if os.path.exists("research_data.json"):
+                with open("research_data.json", "r", encoding="utf-8") as f:
+                    self.research_data = json.load(f)
+                    print(f"✅ Cargados datos de {len(self.research_data)} investigaciones desde cache")
             if os.path.exists("planets_data.json"):
                 with open("planets_data.json", "r", encoding="utf-8") as f:
                     self.planets_data = json.load(f)
-                    print(f"✅ Cargados datos de {len(self.planets_data)} planetas/lunas desde cache")
+                    print(f"✅ Cargados datos de {len(self.planets_data)} planetas desde cache")
                     # Actualizar el combo de planetas y panel
                     if hasattr(self, 'fleet_planet_combo'):
                         self.update_fleet_origin_combo()
@@ -297,7 +302,7 @@ class MainWindow(QMainWindow):
                     return True
             return False
         except Exception as e:
-            print(f"⚠️ Error cargando datos de planetas: {e}")
+            print(f"⚠️ Error cargando datos: {e}")
             return False
     
     def save_planets_data(self):
@@ -306,9 +311,18 @@ class MainWindow(QMainWindow):
             if self.planets_data:
                 with open("planets_data.json", "w", encoding="utf-8") as f:
                     json.dump(self.planets_data, f, indent=2, ensure_ascii=False)
-                    print(f"✅ Guardados datos de {len(self.planets_data)} planetas/lunas en cache")
+                    print(f"✅ Guardados datos de {len(self.planets_data)} planetas en cache")
         except Exception as e:
             print(f"⚠️ Error guardando datos de planetas: {e}")
+
+    def save_research_data(self):
+        """Guarda los datos de investigaciones en un archivo JSON"""
+        try:
+            with open("research_data.json", "w", encoding="utf-8") as f:
+                json.dump(self.research_data, f, indent=2, ensure_ascii=False)
+                print(f"✅ Guardados datos de {len(self.research_data)} investigaciones en cache")
+        except Exception as e:
+            print(f"⚠️ Error guardando datos de investigaciones: {e}")
 
     def web_engine(self, profile, url):
         web = QWebEngineView()
@@ -1063,6 +1077,7 @@ class MainWindow(QMainWindow):
                 print(f"[AUTO-SEND] {successful}/{len(results)} envíos ejecutados")
                 
                 # Actualizar lista visual y guardar
+                self.update_fleets()
                 self._refresh_scheduled_fleets_list()
                 self.save_scheduled_fleets()
         
@@ -1192,14 +1207,10 @@ class MainWindow(QMainWindow):
         new_interval = self.update_interval_combo.currentData()
         if new_interval is not None:
             self.current_update_interval = new_interval
-            
-            # Actualizar timers
-            if hasattr(self, 'timer_global'):
-                self.timer_global.setInterval(new_interval)
-            if hasattr(self, 'panel_timer'):
-                self.panel_timer.setInterval(new_interval)
-            
+            self.panel_timer.setInterval(new_interval)
+            self.panel_timer
             print(f"[DEBUG] Intervalo de actualización cambiado a {new_interval}ms")
+            self.refresh_main_panel()
 
     def setup_main_web_extraction(self):
         """Configura main_web para extraer datos automáticamente cuando carga una página."""
@@ -1487,7 +1498,7 @@ class MainWindow(QMainWindow):
                 #print("[DEBUG] Error creando vistas secundarias:", e)
 
             # Intentar cargar datos de planetas desde cache
-            cache_loaded = self.load_planets_data()
+            cache_loaded = self.load_data()
             
             if not cache_loaded:
                 # Si no hay cache, cargar planetas desde el navegador
@@ -1712,7 +1723,7 @@ class MainWindow(QMainWindow):
             end = entry.get('end', now)
 
             remaining = max(0, end - now)
-            time = time_str(remaining, True)
+            time = time_str(remaining, self.current_update_interval > 1000)
 
             progress = 0
             if end > start:
@@ -1779,7 +1790,7 @@ class MainWindow(QMainWindow):
                         unique_research[key] = q
 
         # Incluir investigaciones globales (desde popups) también
-        for q in getattr(self, 'global_queues', {}).values():
+        for q in getattr(self, 'research_data', {}).values():
             label = (q.get("label", "") or "")
             name = (q.get("name", "") or "")
             key = f"{label}|{name}".strip().lower()
@@ -2033,9 +2044,9 @@ class MainWindow(QMainWindow):
                 "coords": q_coords
             }
 
-            # Si es global (research), almacenarla en global_queues
+            # Si es global (research), almacenarla en research_data
             if q_planet is None or str(q_planet).upper() == "GLOBAL":
-                self.global_queues[qid] = entry
+                self.research_data[qid] = entry
                 continue
 
             # Si la cola pertenece a este planeta, verificar nombre Y coordenadas
@@ -2134,7 +2145,7 @@ class MainWindow(QMainWindow):
                     self.notified_queues.add(qid)
 
         # Also consider global queues (researches)
-        for q in getattr(self, 'global_queues', {}).values():
+        for q in getattr(self, 'research_data', {}).values():
             qid = q.get("id")
             if not qid:
                 continue
@@ -2229,5 +2240,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Guardar datos al cerrar la aplicación"""
         self.save_scheduled_fleets()
+        self.save_research_data()
         self.save_planets_data()
         super().closeEvent(event)
