@@ -219,7 +219,6 @@ class FleetWorker:
                 "timestamp": time.time()
             }
 
-
 class GalaxyWorker:
     def __init__(self, galaxy):
         self.galaxy = galaxy

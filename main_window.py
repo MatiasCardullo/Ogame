@@ -9,6 +9,7 @@ from PyQt6.QtWebEngineCore import QWebEngineProfile
 from PyQt6.QtCore import QUrl, QTimer, Qt, QDateTime
 from PyQt6.QtGui import QIcon
 from custom_page import CustomWebPage
+from panel import refresh_fleets_panel, refresh_resources_panel, update_planet_data
 from sprite_widget import SpriteWidget
 from datetime import timedelta
 import time, os, subprocess, json, sys
@@ -133,20 +134,6 @@ class MainWindow(QMainWindow):
         top_container.setLayout(top_layout)
         main_layout.addWidget(top_container)
         
-        # ----- Control de intervalo de actualización -----
-        update_interval_layout = QHBoxLayout()
-        update_interval_layout.addWidget(QLabel("⏱️ Intervalo de actualización:"))
-        self.update_interval_combo = QComboBox()
-        self.update_interval_combo.addItem("1 segundo", 1000)
-        self.update_interval_combo.addItem("10 segundo", 10000)
-        self.update_interval_combo.addItem("30 segundos", 30000)
-        self.update_interval_combo.addItem("1 minuto", 60000)
-        self.update_interval_combo.setCurrentIndex(0)  # Default: 1 segundos
-        self.update_interval_combo.currentIndexChanged.connect(self.on_update_interval_changed)
-        update_interval_layout.addWidget(self.update_interval_combo)
-        update_interval_layout.addStretch()
-        main_layout.addLayout(update_interval_layout)
-        
         # ----- Tabs internos para recursos/flotas -----
         self.panel_tabs = QTabWidget()
         
@@ -188,9 +175,25 @@ class MainWindow(QMainWindow):
         
         main_layout.addWidget(self.panel_tabs, 1)  # stretch factor = 1
 
+        # ----- Control de intervalo de actualización -----
+        footer_layout = QHBoxLayout()
+        update_interval_layout = QHBoxLayout()
+        update_interval_layout.addWidget(QLabel("⏱️ Intervalo de actualización:"))
+        self.update_interval_combo = QComboBox()
+        self.update_interval_combo.addItem("1 segundo", 1000)
+        self.update_interval_combo.addItem("10 segundo", 10000)
+        self.update_interval_combo.addItem("30 segundos", 30000)
+        self.update_interval_combo.addItem("1 minuto", 60000)
+        self.update_interval_combo.setCurrentIndex(0)  # Default: 1 segundos
+        self.update_interval_combo.currentIndexChanged.connect(self.on_update_interval_changed)
+        update_interval_layout.addWidget(self.update_interval_combo)
+        update_interval_layout.addStretch()
+        
         self._notif_label = QLabel("")
         self._notif_label.setStyleSheet("color: #0f0; font-weight: bold; padding: 8px;")
-        main_layout.addWidget(self._notif_label)
+        footer_layout.addLayout(update_interval_layout)
+        footer_layout.addWidget(self._notif_label)
+        main_layout.addLayout(footer_layout)
         
         self.tabs.addTab(self.main_panel, "📊 Panel Principal")
 
@@ -351,11 +354,11 @@ class MainWindow(QMainWindow):
         
         self.fleet_mission_combo = QComboBox()
         self.fleet_mission_combo.addItems([
+            "Transporte",
+            "Desplegar",
             "Expedición",
             "Recolecta de escombros",
             "Ataque",
-            "Transporte",
-            "Estacionamiento",
             "Espía"
         ])
         self.fleet_mission_combo.currentTextChanged.connect(self.on_fleet_mission_changed)
@@ -392,8 +395,6 @@ class MainWindow(QMainWindow):
         ships_group = QGroupBox("🚢 Naves a Enviar")
         ships_layout = QVBoxLayout()
         
-        ships_scroll = QScrollArea()
-        ships_scroll.setWidgetResizable(True)
         ships_container = QWidget()
         ships_grid = QGridLayout(ships_container)
         ships_grid.setSpacing(1)
@@ -427,21 +428,19 @@ class MainWindow(QMainWindow):
             
             # Crear layout horizontal para label + spinbox
             ship_layout = QHBoxLayout()
-            ship_layout.addWidget(QLabel(f"  {ship_name}:"))
             ship_layout.addWidget(spinbox)
+            ship_layout.addWidget(QLabel(f" {ship_name}"))
             ship_layout.addStretch()
             
-            # Agregar a la grilla (3 columnas)
+            # Agregar a la grilla (4 columnas)
             ships_grid.addLayout(ship_layout, row, col)
             
             col += 1
-            if col >= 3:
+            if col >= 4:
                 col = 0
                 row += 1
         
-        ships_scroll.setWidget(ships_container)
-        ships_scroll.setMaximumHeight(500)
-        ships_layout.addWidget(ships_scroll)
+        ships_layout.addWidget(ships_container)
         ships_group.setLayout(ships_layout)
         scheduler_layout.addWidget(ships_group)
         
@@ -1297,7 +1296,7 @@ class MainWindow(QMainWindow):
         
         def after_detect(det):
             if not det:
-                self.update_planet_data(
+                update_planet_data(self,
                     planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
                     coords=getattr(self, 'current_main_web_coords', '0:0:0'),
                     resources=resources,
@@ -1312,7 +1311,7 @@ class MainWindow(QMainWindow):
             )
             
             if not present_flags:
-                self.update_planet_data(
+                update_planet_data(self,
                     planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
                     coords=getattr(self, 'current_main_web_coords', '0:0:0'),
                     resources=resources,
@@ -1327,7 +1326,7 @@ class MainWindow(QMainWindow):
             )
             
             if not active_flags:
-                self.update_planet_data(
+                update_planet_data(self,
                     planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
                     coords=getattr(self, 'current_main_web_coords', '0:0:0'),
                     resources=resources,
@@ -1348,7 +1347,7 @@ class MainWindow(QMainWindow):
                 parts.append("extract_shipyard()")
             
             if not parts:
-                self.update_planet_data(
+                update_planet_data(self,
                     planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
                     coords=getattr(self, 'current_main_web_coords', '0:0:0'),
                     resources=resources,
@@ -1434,7 +1433,7 @@ class MainWindow(QMainWindow):
         ]
         queues_list.sort(key=lambda q: q.get("end", now))
         
-        self.update_planet_data(
+        update_planet_data(self,
             planet_name=planet_name,
             coords=coords,
             resources=resources,
@@ -1442,14 +1441,6 @@ class MainWindow(QMainWindow):
             is_moon=is_moon,
             parent_planet_key=parent_planet_key
         )
-
-    def _get_planet_key(self, planet_name, coords):
-        """Genera una clave única para un planeta basada en nombre y coordenadas.
-        Esto evita que planetas con el mismo nombre pero diferentes coordenadas se sobrescriban.
-        """
-        if not coords:
-            coords = "0:0:0"
-        return f"{planet_name}|{coords}"
 
     def on_open(self):
         self.showMaximized()
@@ -1512,18 +1503,6 @@ class MainWindow(QMainWindow):
             # Inicializar combo de planetas después que se carguen datos
             QTimer.singleShot(5000, self.update_fleet_origin_combo)
         QTimer.singleShot(3000, lambda: self.login.page().runJavaScript(js, done))
-
-    def div_middle(self, webview):
-        """Muestra solo el div middle en el QWebEngineView dado"""
-        js = """
-        const middle = document.getElementById("middle");
-        if (middle) {
-            document.body.innerHTML = "";
-            document.body.appendChild(middle.cloneNode(true));
-        }
-        """
-        webview.page().runJavaScript(js)
-    
 
     def load_other_planets(self):
         """Busca los enlaces de otros planetas en main_web y los carga secuencialmente."""
@@ -1607,10 +1586,58 @@ class MainWindow(QMainWindow):
             
             # Si hay luna, cargarla después
             if moon and moon.get('id'):
-                QTimer.singleShot(1200, self.load_moon_for_current_planet)
+                QTimer.singleShot(1200, load_moon_for_current_planet)
             else:
                 QTimer.singleShot(1200, finish_and_next)
 
+        def load_moon_for_current_planet():
+            """Carga la luna del planeta actual si existe."""
+            if not hasattr(self, 'planets_to_load') or self.current_planet_index == 0:
+                return
+            
+            # El índice ya fue incrementado, así que usamos current_planet_index - 1
+            planet = self.planets_to_load[self.current_planet_index - 1]
+            moon = planet.get('moon')
+            
+            if not moon or not moon.get('id'):
+                return
+            
+            moon_id = moon.get('id')
+            moon_name = moon.get('name', 'Moon')
+            
+            # Guardar la referencia al planeta padre antes de cargar la luna
+            # Usar el mismo sistema de ID que en update_planet_data
+            import hashlib
+            parent_coords = self.current_main_web_coords
+            parent_id = hashlib.sha1(parent_coords.encode("utf-8")).hexdigest()[:16]
+            self.current_planet_parent_key = parent_id
+            
+            # Construir URL usando moon_id
+            moon_url = f"{self.base_url}?page=ingame&component=overview&cp={moon_id}"
+            
+            print(f"[DEBUG] Cargando luna {moon_name} (ID: {moon_id}) en main_web")
+
+            def finish_and_next():
+                """Termina la extracción de luna y pasa al siguiente planeta."""
+                QTimer.singleShot(500, self.load_next_planet)
+
+            def on_moon_load_finished(ok=True):
+                """Callback cuando termina de cargar la página de la luna."""
+                try:
+                    self.main_web.loadFinished.disconnect(on_moon_load_finished)
+                except Exception:
+                    pass
+                print(f"[DEBUG] Página de {moon_name} cargada en main_web, esperando datos...")
+                # Los datos se extraerán automáticamente vía on_main_web_loaded y los handlers
+                QTimer.singleShot(1200, finish_and_next)
+
+            try:
+                self.main_web.loadFinished.connect(on_moon_load_finished)
+                self.main_web.load(QUrl(moon_url))
+            except Exception as e:
+                print('[DEBUG] Error cargando luna en main_web:', e)
+                QTimer.singleShot(1000, finish_and_next)
+        
         try:
             self.main_web.loadFinished.connect(on_planet_load_finished)
             self.main_web.load(QUrl(planet_url))
@@ -1621,53 +1648,6 @@ class MainWindow(QMainWindow):
         # avanzar índice inmediatamente
         self.current_planet_index += 1
 
-    def load_moon_for_current_planet(self):
-        """Carga la luna del planeta actual si existe."""
-        if not hasattr(self, 'planets_to_load') or self.current_planet_index == 0:
-            return
-        
-        # El índice ya fue incrementado, así que usamos current_planet_index - 1
-        planet = self.planets_to_load[self.current_planet_index - 1]
-        moon = planet.get('moon')
-        
-        if not moon or not moon.get('id'):
-            return
-        
-        moon_id = moon.get('id')
-        moon_name = moon.get('name', 'Moon')
-        
-        # Guardar la referencia al planeta padre antes de cargar la luna
-        # Usar el mismo sistema de ID que en update_planet_data
-        import hashlib
-        parent_coords = self.current_main_web_coords
-        parent_id = hashlib.sha1(parent_coords.encode("utf-8")).hexdigest()[:16]
-        self.current_planet_parent_key = parent_id
-        
-        # Construir URL usando moon_id
-        moon_url = f"{self.base_url}?page=ingame&component=overview&cp={moon_id}"
-        
-        print(f"[DEBUG] Cargando luna {moon_name} (ID: {moon_id}) en main_web")
-
-        def finish_and_next():
-            """Termina la extracción de luna y pasa al siguiente planeta."""
-            QTimer.singleShot(500, self.load_next_planet)
-
-        def on_moon_load_finished(ok=True):
-            """Callback cuando termina de cargar la página de la luna."""
-            try:
-                self.main_web.loadFinished.disconnect(on_moon_load_finished)
-            except Exception:
-                pass
-            print(f"[DEBUG] Página de {moon_name} cargada en main_web, esperando datos...")
-            # Los datos se extraerán automáticamente vía on_main_web_loaded y los handlers
-            QTimer.singleShot(1200, finish_and_next)
-
-        try:
-            self.main_web.loadFinished.connect(on_moon_load_finished)
-            self.main_web.load(QUrl(moon_url))
-        except Exception as e:
-            print('[DEBUG] Error cargando luna en main_web:', e)
-            QTimer.singleShot(1000, finish_and_next)
 
     def update_fleets(self):
         """Actualiza el estado de flotas en movimiento"""
@@ -1686,419 +1666,15 @@ class MainWindow(QMainWindow):
         
         except Exception as e:
             print(f"[FLEETS] Error en update_fleets: {e}")
-            import traceback
-            traceback.print_exc()
 
     # ====================================================================
     #  PANEL PRINCIPAL
     # ====================================================================
     def refresh_main_panel(self):
         """Actualiza ambas secciones del panel (recursos y flotas)"""
-        self.refresh_resources_panel()
-        self.refresh_fleets_panel()
+        refresh_resources_panel(self)
+        refresh_fleets_panel(self)
 
-    def refresh_resources_panel(self):
-        """Actualiza la pestaña de Recursos y Colas"""
-        html = """
-        <style>
-            body { background-color: #000; color: #EEE; font-family: Consolas; }
-            table { border-collapse: collapse; margin-top: 10px; width: 100%; }
-            th { background-color: #222; color: #0f0; border: 1px solid #333; padding: 8px; text-align: center; }
-            td { background-color: #111; color: #EEE; border: 1px solid #333; padding: 6px; font-size: 12px; }
-            .bar { font-family: monospace; }
-            .research-section { background-color: #1a1a2e; padding: 8px; margin-top: 10px; border: 1px solid #0af; }
-            .moon-section { background-color: #0a1a1a; padding: 4px 6px; margin-top: 4px; border-left: 2px solid #0af; font-size: 11px; }
-        </style>
-        <h2>🌌 Recursos y Colas</h2>
-        """
-
-        if not self.planets_data:
-            html += "<p>No hay datos de planetas aún.</p>"
-            self.resources_label.setText(html)
-            return
-
-        def queue_entry(entry, now):
-            name = entry.get('name', '')
-            start = entry.get('start', now)
-            end = entry.get('end', now)
-
-            remaining = max(0, end - now)
-            time = time_str(remaining, self.current_update_interval > 1000)
-
-            progress = 0
-            if end > start:
-                progress = min(100, max(0, ((now - start) / (end - start)) * 100))
-
-            return name, time, progress
-
-        def format_queue_entry(entry, now):
-            """Formato amigable para mostrar una queue"""
-            name, time, progress = queue_entry(entry, now)
-            color = progress_color(progress)
-            barra = barra_html(progress, 100, color)
-            aux = f"{name} [{int(progress)}%] ({time})"
-            if len(aux) > 40:
-                return f"{name}<br>[{int(progress)}%] ({time})<br>{barra}"
-            else:
-                return f"{aux}<br>{barra}"
-        
-        def format_research_queue_entry(entry, now):
-            """Formato amigable para mostrar una queue de Investigacion"""
-            name, time, progress = queue_entry(entry, now)
-            color = progress_color(progress, 89)
-            color = "#0f0" if progress < 89 else "#ff0" if progress < 95 else "#f00"
-            barra = barra_html(progress, 100, color, 50)
-            return f"{barra} {name} [{progress:.2f}%] ({time})"
-        
-        # Extraer solo planetas (no lunas) para las columnas, ordenados por coordenadas
-        planet_info = []
-        for planet_id, pdata in self.planets_data.items():
-            name = pdata.get("name", "")
-            coords = pdata.get("coords", "")
-            planet_info.append((name, coords, planet_id))
-        
-        # Ordenar por coordenadas (G:S:P)
-        def coords_sort_key(item):
-            name, coords, pid = item
-            try:
-                parts = coords.split(":")
-                g = int(parts[0]) if len(parts) > 0 else 0
-                s = int(parts[1]) if len(parts) > 1 else 0
-                p = int(parts[2]) if len(parts) > 2 else 0
-                return (g, s, p)
-            except (ValueError, IndexError):
-                return (0, 0, 0)
-        
-        planet_info.sort(key=coords_sort_key)
-        
-        now = int(time.time())
-
-        # ----- Investigaciones (global, deduplicadas por label+name)
-        unique_research = {}
-        for planet_key, pdata in self.planets_data.items():
-            queues = pdata.get("queues", [])
-            for q in queues:
-                label = (q.get("label", "") or "")
-                name = (q.get("name", "") or "")
-                is_research = (
-                    "Investigación" in label or "🧬" in label or
-                    "investig" in label.lower() or "research" in label.lower()
-                )
-                if is_research:
-                    key = f"{label}|{name}".strip().lower()
-                    if key not in unique_research:
-                        unique_research[key] = q
-
-        # Incluir investigaciones globales (desde popups) también
-        for q in getattr(self, 'research_data', {}).values():
-            label = (q.get("label", "") or "")
-            name = (q.get("name", "") or "")
-            key = f"{label}|{name}".strip().lower()
-            if key not in unique_research:
-                unique_research[key] = q
-
-        if unique_research:
-            html += "<div class='research-section'><b>🧬 Investigaciones:</b><br>"
-            for entry in unique_research.values():
-                end = int(entry.get("end", now))
-                if end <= now:
-                    continue
-                html += format_research_queue_entry(entry, now) + "<br>"
-            html += "</div>"
-
-        # ----- Tabla recursos + colas por planeta
-        html += "<table><tr><th>Recurso</th>"
-        for name, coords, key in planet_info:
-            if not coords == "":
-                html += f"<th>{name}<br><small>{coords}</small></th>"
-        html += "</tr>"
-
-        resource_names = ["Metal", "Cristal", "Deuterio", "Energía"]
-        resource_specs = [
-            ("metal", "cap_metal", "prod_metal", "#555"),
-            ("crystal", "cap_crystal", "prod_crystal", "#aff"),
-            ("deuterium", "cap_deuterium", "prod_deuterium", "#0f8"),
-            ("energy", None, None, "#f0f")
-        ]
-
-        for rname, spec in zip(resource_names, resource_specs):
-            rkey, capkey, prodkey, color = spec
-            aux = f"<tr><td><b>{rname}</b></td>"
-            for name, coords, key in planet_info:
-                pdata = self.planets_data[key]
-                r = pdata["resources"]
-
-                if rkey == "energy":
-                    aux += f"<td>⚡ {r.get('energy', 0)}</td>"
-                    continue
-
-                cant = r.get(rkey, 0)
-                cap = r.get(capkey, 1)
-                prodInt = r.get(prodkey, 0)
-                if cant < cap:
-                    if prodInt > 0:
-                        full = f"({produccion(prodInt)}) lleno en {tiempo_lleno(cant, cap, prodInt)}"
-                    else:
-                        full = f"({produccion(prodInt)}) vacio en {tiempo_lleno(cant, cap, -prodInt)}"
-                else:
-                    full = f" - almacenes llenos!!!"
-                char = progress_color((cant / cap) * 100)
-                barra = barra_html(cant, cap, color, 19) + f"<span style='color:{char};'>{'█'}</span>"
-                aux += f"<td>{cantidad(cant)} {full}<br>{barra}"
-                
-                # Mostrar lunas si existen
-                moons = pdata.get("moons", {})
-                if moons:
-                    for moon_key, moon_data in moons.items():
-                        moon_resources = moon_data.get("resources", {})
-                        moon_cant = moon_resources.get(rkey, 0)
-                        if moon_cant>0:
-                            aux += "<div class='moon-section'>"
-                            moon_name = moon_data.get("name", "Moon")
-                            aux += f"🌙 {moon_name}: {cantidad(moon_cant)}"
-                            aux += "</div>"
-                aux += "</td>"
-                
-            html += aux
-            html += "</tr>"
-
-        # ----- Colas (no investigación) — agrupar por tipo y mostrar por planeta
-        queue_types = {
-            "🏗️ Construcciones": [],
-            "🚀 Hangar": [],
-            "🌿 Forma de Vida": []
-        }
-
-        for name, coords, key in planet_info:
-            for q in self.planets_data[key].get("queues", []):
-                label = q.get("label", "")
-                end = int(q.get("end", now))
-                if end <= now:
-                    continue
-                if "Investigación" in label or "🧬" in label:
-                    continue
-                elif "Forma de Vida" in label or "lf" in label.lower():
-                    queue_types["🌿 Forma de Vida"].append((name, coords, q))
-                elif "Hangar" in label or "🚀" in label:
-                    queue_types["🚀 Hangar"].append((name, coords, q))
-                else:
-                    queue_types["🏗️ Construcciones"].append((name, coords, q))
-            
-            # Agregar colas de lunas también
-            moons = self.planets_data[key].get("moons", {})
-            for moon_key, moon_data in moons.items():
-                for q in moon_data.get("queues", []):
-                    label = q.get("label", "")
-                    end = int(q.get("end", now))
-                    if end <= now:
-                        continue
-                    # Para lunas, solo mostrar construcciones
-                    queue_types["🏗️ Construcciones"].append((name, coords, q, moon_data.get("name", "Moon")))
-
-        for qtype, entries in queue_types.items():
-            if not entries:
-                continue
-
-            html += f"<tr><td><b>{qtype}</b></td>"
-
-            for name, coords, key in planet_info:
-                # Colas del planeta: filtrar y extraer solo el dict q
-                planet_entries = [e[2] for e in entries if len(e) == 3 and e[0] == name and e[1] == coords]
-                # Colas de lunas del planeta: extraer (q_dict, moon_name)
-                moon_entries = [(e[2], e[3]) for e in entries if len(e) == 4 and e[0] == name and e[1] == coords]
-                
-                if not planet_entries and not moon_entries:
-                    html += "<td>—</td>"
-                    continue
-
-                html += "<td>"
-                
-                # Mostrar colas del planeta
-                for idx, q in enumerate(planet_entries):
-                    html += format_queue_entry(q, now)
-                    if idx < len(planet_entries) - 1 or moon_entries:
-                        html += "<br>"
-                
-                # Mostrar colas de lunas
-                for midx, (q, moon_name) in enumerate(moon_entries):
-                    html += f"<div class='moon-section'>🌙 {moon_name}<br>"
-                    html += format_queue_entry(q, now)
-                    html += "</div>"
-                    if midx < len(moon_entries) - 1:
-                        html += "<br>"
-                
-                html += "</td>"
-
-            html += "</tr>"
-        html += "</table>"
-
-        self.resources_label.setHtml(html)
-
-    def refresh_fleets_panel(self):
-        """Actualiza la pestaña de Flotas en Movimiento"""
-        html = """
-        <style>
-            body { background-color: #000; color: #EEE; font-family: Consolas; }
-            table { border-collapse: collapse; margin-top: 10px; width: 100%; }
-            th { background-color: #222; color: #0f0; border: 1px solid #333; padding: 8px; text-align: center; }
-            td { background-color: #111; color: #EEE; border: 1px solid #333; padding: 6px; font-size: 12px; }
-            .bar { font-family: monospace; }
-        </style>
-        <h2>🚀 Flotas en Movimiento</h2>
-        """
-
-        if not self.fleets_data:
-            html += "<p style='color: #666;'>📭 Sin flotas en movimiento</p>"
-            self.fleets_label.setHtml(html)
-            return
-
-        html += "<table><tr><th>Misión</th><th>Origen</th><th>Destino</th><th>Naves</th><th>Llegada</th><th>Estado</th></tr>"
-        
-        now = int(time.time())
-        
-        for fleet in self.fleets_data:
-            mission = fleet.get('mission_name', '—')
-            origin = f"{fleet['origin']['name']}<br>{fleet['origin']['coords']}"
-            dest = f"{fleet['destination']['name']}<br>{fleet['destination']['coords']}"
-            ships_count = fleet.get('ships_count', 0)
-            arrival_clock = fleet.get('arrival_clock', '—')
-            arrival_time = fleet.get('arrival_time', 0)
-            
-            # Calcular tiempo faltante
-            remaining = max(0, arrival_time - now)
-            time_remaining = time_str(remaining, True) if remaining > 0 else "Llegó"
-            
-            # Color según estado
-            if remaining <= 0:
-                color = "#f00"  # Rojo - llegó
-            elif remaining <= 300:  # 5 minutos
-                color = "#f80"  # Naranja - pronto
-            else:
-                color = "#0f0"  # Verde - en camino
-            
-            # Indicador de regreso
-            return_indicator = " (R)" if fleet.get('return_flight', False) else ""
-            
-            html += f"<tr><td>{mission}{return_indicator}</td>"
-            html += f"<td><small>{origin}</small></td>"
-            html += f"<td><small>{dest}</small></td>"
-            html += f"<td>{ships_count}</td>"
-            html += f"<td><small>{arrival_clock}</small></td>"
-            html += f"<td><span style='color: {color}; font-weight: bold;'>{time_remaining}</span></td>"
-            html += "</tr>"
-        
-        html += "</table>"
-        
-        self.fleets_label.setHtml(html)
-
-    # ====================================================================
-    #  UPDATE PLANET DATA (API nueva con queues que incluyen id)
-    # ====================================================================
-    def update_planet_data(self, planet_name, coords, resources, queues, is_moon=False, parent_planet_key=None):
-        """
-        Recibe:
-          - planet_name (str)
-          - coords (str)
-          - resources (dict)
-          - queues (list of queue dicts, cada uno con 'id','label','name','start','end','planet_name','coords',...)
-          - is_moon (bool): indica si es una luna
-          - parent_planet_key (str): ID del planeta padre (si es luna)
-        """
-        # Normalizar recursos: asegurar last_update timestamp
-        resources = resources or {}
-        if "last_update" not in resources:
-            resources["last_update"] = time.time()
-
-        # Usar el planet_id real de OGame
-        planet_id = getattr(self, 'current_main_web_planet_id', None)
-        if not planet_id:
-            # Fallback: usar coords como id si no hay planet_id
-            planet_id = coords
-        
-        # Filtrar las queues: solo edificios para lunas
-        qlist = []
-        for q in queues or []:
-            qid = q.get("id")
-            if not qid:
-                continue
-            q_planet = q.get("planet_name", planet_name)
-            q_coords = q.get("coords", coords)
-
-            # Para lunas, ignorar investigaciones (que son globales)
-            if is_moon:
-                label = q.get("label", "")
-                is_research = (
-                    "investig" in label.lower() or "research" in label.lower() or "🧬" in label
-                )
-                if is_research:
-                    continue  # Ignorar investigaciones en lunas
-
-            entry = {
-                "id": qid,
-                "label": q.get("label", ""),
-                "name": q.get("name", ""),
-                "level": q.get("level", ""),
-                "start": int(q.get("start", time.time())),
-                "end": int(q.get("end", time.time())),
-                "planet_name": q_planet,
-                "coords": q_coords
-            }
-
-            # Si es global (research), almacenarla en research_data
-            if q_planet is None or str(q_planet).upper() == "GLOBAL":
-                self.research_data[qid] = entry
-                continue
-
-            # Si la cola pertenece a este planeta, verificar nombre Y coordenadas
-            # Esto es importante cuando hay múltiples planetas con el mismo nombre
-            if q_planet == planet_name and q_coords == coords:
-                qlist.append(entry)
-
-        if is_moon and parent_planet_key:
-            # Guardar luna de forma anidada dentro del planeta usando el ID del planeta padre
-            if parent_planet_key not in self.planets_data:
-                # Si el planeta padre no existe aún, crear un placeholder
-                self.planets_data[parent_planet_key] = {
-                    "id": parent_planet_key,
-                    "name": "",
-                    "coords": "",
-                    "resources": {},
-                    "queues": [],
-                    "moons": {}
-                }
-            # Inicializar estructura de moons si no existe
-            if "moons" not in self.planets_data[parent_planet_key]:
-                self.planets_data[parent_planet_key]["moons"] = {}
-            # Guardar luna dentro del planeta usando su planet_id real
-            self.planets_data[parent_planet_key]["moons"][planet_id] = {
-                "id": planet_id,
-                "name": planet_name,
-                "coords": coords,
-                "resources": resources,
-                "queues": qlist,
-                "last_update": time.time()
-            }
-        else:
-            # Guardar planeta normalmente
-            pdata = self.planets_data.get(planet_id, {})
-            pdata["id"] = planet_id
-            pdata["name"] = planet_name
-            pdata["coords"] = coords
-            pdata["resources"] = resources
-            pdata["queues"] = qlist
-            pdata["last_update"] = time.time()
-            # Asegurar que existe la estructura de moons
-            if "moons" not in pdata:
-                pdata["moons"] = {}
-            self.planets_data[planet_id] = pdata
-
-        # Refrescar UI
-        try:
-            self.refresh_main_panel()
-            self.update_fleet_origin_combo()  # Actualizar combo de planetas
-        except Exception as e:
-            print("[DEBUG] Error updated_planet_data:", e)
-    
     # ====================================================================
     #  Incremento pasivo
     # ====================================================================
@@ -2119,7 +1695,7 @@ class MainWindow(QMainWindow):
             r["deuterium"] += r.get("prod_deuterium", 0) * elapsed
 
     # ====================================================================
-    #  CHECK QUEUES GLOBALES (notificaciones)
+    #  CHECK QUEUES
     # ====================================================================
     def check_queues(self):
         now = int(time.time())
@@ -2127,7 +1703,7 @@ class MainWindow(QMainWindow):
 
         for planet_key, pdata in self.planets_data.items():
             coords = pdata.get("coords", "0:0:0")
-            planet_name = planet_key.rsplit('|', 1)[0] if '|' in planet_key else planet_key
+            planet_name = pdata.get("name", "")
             for q in pdata.get("queues", []):
                 qid = q.get("id")
                 if not qid:
@@ -2193,34 +1769,34 @@ class MainWindow(QMainWindow):
 
         hidden_web.load(QUrl(auction_url))
 
-    def handle_auction_data(self, data):
-        if not data:
-            return
+        def handle_auction_data(data):
+            if not data:
+                return
 
-        status = data.get('status', '—')
-        item = data.get('item', '—')
-        bid = data.get('currentBid', '—')
-        bidder = data.get('highestBidder', '—')
-        time_left = data.get('timeLeft', '—')
+            status = data.get('status', '—')
+            item = data.get('item', '—')
+            bid = data.get('currentBid', '—')
+            bidder = data.get('highestBidder', '—')
+            time_left = data.get('timeLeft', '—')
 
-        if str(time_left).isdigit():
-            try:
-                seconds = int(time_left)
-                td = str(timedelta(seconds=seconds))
-                h, m, s = td.split(":")
-                time_left = f"{int(h)}h {int(m)}m"
-            except:
-                pass
+            if str(time_left).isdigit():
+                try:
+                    seconds = int(time_left)
+                    td = str(timedelta(seconds=seconds))
+                    h, m, s = td.split(":")
+                    time_left = f"{int(h)}h {int(m)}m"
+                except:
+                    pass
 
-        texto = (
-            f"{status}\n"
-            f"Tiempo restante: {time_left}\n"
-            f"Item: {item}\n"
-            f"Oferta: {bid}\n"
-            f"Mejor postor: {bidder}"
-        )
+            texto = (
+                f"{status}\n"
+                f"Tiempo restante: {time_left}\n"
+                f"Item: {item}\n"
+                f"Oferta: {bid}\n"
+                f"Mejor postor: {bidder}"
+            )
 
-        self.auction_text.setPlainText(texto)
+            self.auction_text.setPlainText(texto)
 
     # ====================================================================
     #  NOTIFICACIONES
