@@ -1,5 +1,9 @@
 import time
-from text import barra_html, cantidad, produccion, progress_color, tiempo_lleno, time_str
+from fleet_tab import update_fleet_origin_combo
+from text import (
+    cantidad, progress_color, time_str,
+    planet_production_entry, format_queue_entry, format_research_queue_entry
+)
 
 
 def refresh_resources_panel(self):
@@ -22,39 +26,6 @@ def refresh_resources_panel(self):
         self.resources_label.setText(html)
         return
 
-    def queue_entry(entry, now):
-        name = entry.get('name', '')
-        start = entry.get('start', now)
-        end = entry.get('end', now)
-
-        remaining = max(0, end - now)
-        time = time_str(remaining, self.current_update_interval > 1000)
-
-        progress = 0
-        if end > start:
-            progress = min(100, max(0, ((now - start) / (end - start)) * 100))
-
-        return name, time, progress
-
-    def format_queue_entry(entry, now):
-        """Formato amigable para mostrar una queue"""
-        name, time, progress = queue_entry(entry, now)
-        color = progress_color(progress)
-        barra = barra_html(progress, 100, color)
-        aux = f"{name} [{int(progress)}%] ({time})"
-        if len(aux) > 40:
-            return f"{name}<br>[{int(progress)}%] ({time})<br>{barra}"
-        else:
-            return f"{aux}<br>{barra}"
-    
-    def format_research_queue_entry(entry, now):
-        """Formato amigable para mostrar una queue de Investigacion"""
-        name, time, progress = queue_entry(entry, now)
-        color = progress_color(progress, 89)
-        color = "#0f0" if progress < 89 else "#ff0" if progress < 95 else "#f00"
-        barra = barra_html(progress, 100, color, 50)
-        return f"{barra} {name} [{progress:.2f}%] ({time})"
-    
     # Extraer solo planetas (no lunas) para las columnas, ordenados por coordenadas
     planet_info = []
     for planet_id, pdata in self.planets_data.items():
@@ -94,7 +65,6 @@ def refresh_resources_panel(self):
                 if key not in unique_research:
                     unique_research[key] = q
 
-    # Incluir investigaciones globales (desde popups) también
     for q in getattr(self, 'research_data', {}).values():
         label = (q.get("label", "") or "")
         name = (q.get("name", "") or "")
@@ -108,7 +78,7 @@ def refresh_resources_panel(self):
             end = int(entry.get("end", now))
             if end <= now:
                 continue
-            html += format_research_queue_entry(entry, now) + "<br>"
+            html += format_research_queue_entry(entry, now, self.current_update_interval > 1000) + "<br>"
         html += "</div>"
 
     # ----- Tabla recursos + colas por planeta
@@ -118,45 +88,29 @@ def refresh_resources_panel(self):
             html += f"<th>{name}<br><small>{coords}</small></th>"
     html += "</tr>"
 
-    resource_names = ["Metal", "Cristal", "Deuterio", "Energía"]
-    resource_specs = [
-        ("metal", "cap_metal", "prod_metal", "#555"),
-        ("crystal", "cap_crystal", "prod_crystal", "#aff"),
-        ("deuterium", "cap_deuterium", "prod_deuterium", "#0f8"),
-        ("energy", None, None, "#f0f")
-    ]
-
-    for rname, spec in zip(resource_names, resource_specs):
-        rkey, capkey, prodkey, color = spec
+    resource_specs = ["Metal", "Crystal", "Deuterium", "Energy"]
+    for rname in resource_specs:
+        #rkey, capkey, prodkey, color = spec
         aux = f"<tr><td><b>{rname}</b></td>"
         for name, coords, key in planet_info:
             pdata = self.planets_data[key]
             r = pdata["resources"]
 
-            if rkey == "energy":
-                aux += f"<td>⚡ {r.get('energy', 0)}</td>"
+            rname = rname.lower()
+            if rname == "energy":
+                aux += f"<td>⚡ {r.get(rname, 0)}</td>"
                 continue
-
-            cant = r.get(rkey, 0)
-            cap = r.get(capkey, 1)
-            prodInt = r.get(prodkey, 0)
-            if cant < cap:
-                if prodInt > 0:
-                    full = f"({produccion(prodInt)}) lleno en {tiempo_lleno(cant, cap, prodInt)}"
-                else:
-                    full = f"({produccion(prodInt)}) vacio en {tiempo_lleno(cant, cap, -prodInt)}"
-            else:
-                full = f" - almacenes llenos!!!"
-            char = progress_color((cant / cap) * 100)
-            barra = barra_html(cant, cap, color, 19) + f"<span style='color:{char};'>{'█'}</span>"
-            aux += f"<td>{cantidad(cant)} {full}<br>{barra}"
+            elif rname == "metal": color = "#555"
+            elif rname == "crystal": color = "#aff"
+            elif rname == "deuterium": color = "#0f8"
+            aux += planet_production_entry(r.get(rname, 0), r.get(f"cap_{rname}", 1), r.get(f"prod_{rname}", 0), color)
             
             # Mostrar lunas si existen
             moons = pdata.get("moons", {})
             if moons:
                 for moon_key, moon_data in moons.items():
                     moon_resources = moon_data.get("resources", {})
-                    moon_cant = moon_resources.get(rkey, 0)
+                    moon_cant = moon_resources.get(rname, 0)
                     if moon_cant>0:
                         aux += "<div class='moon-section'>"
                         moon_name = moon_data.get("name", "Moon")
@@ -220,14 +174,14 @@ def refresh_resources_panel(self):
             
             # Mostrar colas del planeta
             for idx, q in enumerate(planet_entries):
-                html += format_queue_entry(q, now)
+                html += format_queue_entry(q, now, self.current_update_interval > 1000)
                 if idx < len(planet_entries) - 1 or moon_entries:
                     html += "<br>"
             
             # Mostrar colas de lunas
             for midx, (q, moon_name) in enumerate(moon_entries):
                 html += f"<div class='moon-section'>🌙 {moon_name}<br>"
-                html += format_queue_entry(q, now)
+                html += format_queue_entry(q, now, self.current_update_interval > 1000)
                 html += "</div>"
                 if midx < len(moon_entries) - 1:
                     html += "<br>"
@@ -395,7 +349,7 @@ def update_planet_data(self, planet_name, coords, resources, queues, is_moon=Fal
     # Refrescar UI
     try:
         self.refresh_main_panel()
-        self.update_fleet_origin_combo()  # Actualizar combo de planetas
+        update_fleet_origin_combo(self)  # Actualizar combo de planetas
     except Exception as e:
         print("[DEBUG] Error updated_planet_data:", e)
 

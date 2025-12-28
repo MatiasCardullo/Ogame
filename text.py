@@ -12,16 +12,16 @@ def barra_html(cant, cap, color, size = 20):
 
 def tiempo_lleno(cant, cap, prod):
     try:
-        if prod <= 0 or cant >= cap:
-            return "—"
-        t = (cap - cant) / (prod * 3600)
+        if prod <= 0:
+            t = cant / (prod*-1 * 3600)
+        else:
+            t = (cap - cant) / (prod * 3600)
         if t < 1.6:
             return f"{int(t*60)} minutos"
         elif t > 72:
             return f"{int(t/24)} dias"
         else:
             return f"{int(t)} horas"
-        
     except:
         return "—"
 
@@ -49,10 +49,10 @@ def time_str(t, not_seconds = False):
             time = f"{s}s"
     return time
     
-def produccion(prod):
-    if prod > 1:
+def production(prod):
+    if abs(prod) > 1:
         prod_t = f"{int(prod)}/s"
-    elif prod > 1/60:
+    elif abs(prod) > 1/60:
         prod_t = f"{int(prod*60)}/m"
     else:
         prod_t = f"{int(prod*3600)}/h"
@@ -69,3 +69,45 @@ def cantidad(cant):
 
 def progress_color(i = 0, p1 = 75, p2 = 95, color1 = "#0f0", color2 = "#ff0", color3 = "#f00"):
     return color1 if i < p1 else color2 if i < p2 else color3
+
+def queue_entry(entry, now):
+    name = entry.get('name', '')
+    start = entry.get('start', now)
+    end = entry.get('end', now)
+    remaining = max(0, end - now)
+    progress = 0
+    if end > start:
+        progress = min(100, max(0, ((now - start) / (end - start)) * 100))
+    return name, remaining, progress
+
+def format_queue_entry(entry, now, not_seconds):
+    """Formato amigable para mostrar una queue"""
+    name, remaining, progress = queue_entry(entry, now)
+    color = progress_color(progress)
+    barra = barra_html(progress, 100, color)
+    time = time_str(remaining, not_seconds)
+    aux = f"{name} [{int(progress)}%] ({time})"
+    if len(aux) > 39:
+        return f"{name}<br>[{int(progress)}%] ({time})<br>{barra}"
+    else:
+        return f"{aux}<br>{barra}"
+
+def format_research_queue_entry(entry, now, not_seconds):
+    """Formato amigable para mostrar una queue de Investigacion"""
+    name, remaining, progress = queue_entry(entry, now)
+    color = progress_color(progress, 89)
+    color = "#0f0" if progress < 89 else "#ff0" if progress < 95 else "#f00"
+    barra = barra_html(progress, 100, color, 50)
+    return f"{barra} {name} [{progress:.2f}%] ({time_str(remaining, not_seconds)})"
+
+def planet_production_entry(cant, cap, prodInt, color = "#fff"):
+    if cant < cap or prodInt < 0:
+        if prodInt > 0:
+            full = f"({production(prodInt)}) lleno en {tiempo_lleno(cant, cap, prodInt)}"
+        else:
+            full = f"({production(prodInt)}) vacio en {tiempo_lleno(cant, cap, prodInt)}"
+    else:
+        full = f" - almacenes llenos!!!"
+    char = progress_color((cant / cap) * 100)
+    barra = barra_html(cant, cap, color, 19) + f"<span style='color:{char};'>{'█'}</span>"
+    return f"<td>{cantidad(cant)} {full}<br>{barra}"

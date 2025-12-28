@@ -7,44 +7,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from text import cantidad
 
-def extract_debris_list(galaxy_data: dict):
-    debris_list = []
-
-    for g, systems in galaxy_data.items():
-        # Verificar que systems es un diccionario
-        if not isinstance(systems, dict):
-            continue
-            
-        for s, positions in systems.items():
-            # Verificar que positions es un diccionario
-            if not isinstance(positions, dict):
-                continue
-                
-            for pos, entry in positions.items():
-                # Verificar que entry es un diccionario
-                if not isinstance(entry, dict):
-                    continue
-                    
-                debris = entry.get("debris")
-                if not debris:
-                    continue
-
-                try:
-                    debris_list.append({
-                        "galaxy": int(g),
-                        "system": int(s),
-                        "position": int(pos),
-                        "metal": int(debris.get("metal", 0)) if isinstance(debris, dict) else 0,
-                        "crystal": int(debris.get("crystal", 0)) if isinstance(debris, dict) else 0,
-                        "deuterium": int(debris.get("deuterium", 0)) if isinstance(debris, dict) else 0,
-                        "requiredShips": debris.get("requiredShips") if isinstance(debris, dict) else None
-                    })
-                except (ValueError, TypeError, AttributeError):
-                    # Ignorar entries con datos malformados
-                    continue
-
-    return debris_list
-
 def create_debris_tab(self):
     """Crea la pestaña para mostrar debris y programar reciclajes"""
     debris_widget = QWidget()
@@ -179,6 +141,44 @@ def create_debris_tab(self):
     self.debris_data = []
     
     return debris_widget
+
+def extract_debris_list(galaxy_data: dict):
+    debris_list = []
+
+    for g, systems in galaxy_data.items():
+        # Verificar que systems es un diccionario
+        if not isinstance(systems, dict):
+            continue
+            
+        for s, positions in systems.items():
+            # Verificar que positions es un diccionario
+            if not isinstance(positions, dict):
+                continue
+                
+            for pos, entry in positions.items():
+                # Verificar que entry es un diccionario
+                if not isinstance(entry, dict):
+                    continue
+                    
+                debris = entry.get("debris")
+                if not debris:
+                    continue
+
+                try:
+                    debris_list.append({
+                        "galaxy": int(g),
+                        "system": int(s),
+                        "position": int(pos),
+                        "metal": int(debris.get("metal", 0)) if isinstance(debris, dict) else 0,
+                        "crystal": int(debris.get("crystal", 0)) if isinstance(debris, dict) else 0,
+                        "deuterium": int(debris.get("deuterium", 0)) if isinstance(debris, dict) else 0,
+                        "requiredShips": debris.get("requiredShips") if isinstance(debris, dict) else None
+                    })
+                except (ValueError, TypeError, AttributeError):
+                    # Ignorar entries con datos malformados
+                    continue
+
+    return debris_list
 
 def load_debris_data(self):
     """Carga datos de debris desde los archivos galaxy_data_g*.json"""
