@@ -2,34 +2,56 @@ import json
 import time
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QTextEdit, QPushButton, QComboBox,
+    QLabel, QPushButton, QComboBox,
     QSpinBox, QGroupBox, QFormLayout, QListWidget,
     QListWidgetItem, QDateTimeEdit, QGridLayout
 )
-from PyQt6.QtCore import QDateTime
+from PyQt6.QtCore import QDateTime, QThread, pyqtSignal, QObject
 
 from fleet_sender import send_scheduled_fleets
-from worker import FleetWorker
+
+class FleetSendWorker(QObject):
+    """Worker para enviar flotas programadas sin bloquear la UI"""
+    finished = pyqtSignal()
+    success = pyqtSignal(list)
+    error = pyqtSignal(str)
+    
+    def __init__(self, scheduled_fleets, profile_path, fleet_slots=None, exp_slots=None):
+        super().__init__()
+        self.scheduled_fleets = scheduled_fleets
+        self.profile_path = profile_path
+        self.fleet_slots = fleet_slots or {"current": 0, "max": 0}
+        self.exp_slots = exp_slots or {"current": 0, "max": 0}
+    
+    def run(self):
+        """Envía flotas programadas en hilo separado"""
+        try:
+            results = send_scheduled_fleets(
+                self.scheduled_fleets,
+                profile_path=self.profile_path,
+                fleet_slots=self.fleet_slots,
+                exp_slots=self.exp_slots
+            )
+            
+            if results:
+                self.success.emit(results)
+            else:
+                self.error.emit('No results from send_scheduled_fleets')
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            self.finished.emit()
 
 def create_fleets_tab(self):
     fleets_tab = QWidget()
-    fleets_layout = QHBoxLayout()
+    fleets_layout = QVBoxLayout()
     fleets_layout.setContentsMargins(5, 5, 5, 5)
     fleets_layout.setSpacing(10)
 
-    # Panel izquierdo: Flotas en movimiento
-    left_fleets = QWidget()
-    left_fleets_layout = QVBoxLayout()
-    self.fleets_label = QTextEdit()
-    self.fleets_label.setReadOnly(True)
-    left_fleets_layout.addWidget(QLabel("📊 Flotas en Movimiento"))
-    left_fleets_layout.addWidget(self.fleets_label)
-    left_fleets.setLayout(left_fleets_layout)
-    fleets_layout.addWidget(left_fleets, 1)
-
-    # Panel derecho: Programador de naves
-    right_scheduler = create_fleet_scheduler_panel(self)
-    fleets_layout.addWidget(right_scheduler, 1)
+    # Programador de naves
+    scheduler = create_fleet_scheduler_panel(self)
+    fleets_layout.addWidget(scheduler)
+    
     fleets_tab.setLayout(fleets_layout)
     return fleets_tab
 
@@ -276,7 +298,7 @@ def on_fleet_mission_changed(self, mission_text):
         self.fleet_timing_combo.blockSignals(True)
         self.fleet_timing_combo.setCurrentText("Cuando esté disponible")
         self.fleet_timing_combo.blockSignals(False)
-        self.on_fleet_timing_changed("Cuando esté disponible")
+        on_fleet_timing_changed(self,"Cuando esté disponible")
     else:
         # Permitir edición normal para otras misiones
         self.fleet_dest_position.setEnabled(True)
@@ -373,11 +395,11 @@ def on_send_fleet_clicked(self):
     self._notif_label.setText(f"✅ Envío programado: {mission} a {coords} (x{repeat_count})")
     
     # Actualizar lista visual
-    self._refresh_scheduled_fleets_list()
-    self.save_scheduled_fleets()
+    _refresh_scheduled_fleets_list(self)
+    save_scheduled_fleets(self.scheduled_fleets)
     
     # Limpiar formulario
-    self.on_clear_fleet_form()
+    on_clear_fleet_form(self)
 
 def on_clear_fleet_form(self):
     """Limpia los campos del formulario de flotas"""
@@ -393,34 +415,46 @@ def on_clear_fleet_form(self):
     self.fleet_send_time.setDateTime(QDateTime.currentDateTime())
 
 def auto_send_scheduled_fleets(self):
-    """Envía automáticamente los envíos de flotas programadas (llamado por timer)"""
+    """Envía automáticamente los envíos de flotas programadas (llamado por timer, en hilo separado)"""
     if not self.scheduled_fleets:
         return
     
-    try:
-        # Verificar si hay envíos pendientes
-        pending_fleets = [f for f in self.scheduled_fleets if f.get("status") in ["Pendiente"]]
-        if not pending_fleets:
-            return
-        
-        # Pasar los datos de flotas actuales para "Cuando esté disponible"
-        results = send_scheduled_fleets(
-            self.scheduled_fleets, 
-            profile_path="profile_data",
-            fleets_data=self.fleets_data
-        )
-        
-        if results:
-            successful = sum(1 for r in results if r["success"])
-            print(f"[AUTO-SEND] {successful}/{len(results)} envíos ejecutados")
-            self.main_web.reload()
-            # Actualizar lista visual y guardar
-            update_fleets(self)
-            _refresh_scheduled_fleets_list(self)
-            save_scheduled_fleets(self.scheduled_fleets)
+    # Verificar si hay envíos pendientes
+    pending_fleets = [f for f in self.scheduled_fleets if f.get("status") in ["Pendiente"]]
+    if not pending_fleets:
+        return
     
-    except Exception as e:
-        print(f"[AUTO-SEND] Error: {str(e)}")
+    # Crear worker y thread para envío
+    self.fleet_send_thread = QThread()
+    self.fleet_send_worker = FleetSendWorker(
+        self.scheduled_fleets,
+        profile_path="profile_data",
+        fleet_slots=self.fleet_slots,
+        exp_slots=self.exp_slots
+    )
+    self.fleet_send_worker.moveToThread(self.fleet_send_thread)
+    
+    # Conectar señales
+    self.fleet_send_thread.started.connect(self.fleet_send_worker.run)
+    self.fleet_send_worker.finished.connect(self.fleet_send_thread.quit)
+    self.fleet_send_worker.success.connect(lambda msg: _on_fleet_send_success(self, msg))
+    self.fleet_send_worker.error.connect(lambda msg: _on_fleet_send_error(self, msg))
+    
+    # Iniciar thread
+    self.fleet_send_thread.start()
+
+def _on_fleet_send_success(self, results):
+    """Callback cuando el envío de flotas es exitoso"""
+    successful = sum(1 for r in results if r["success"])
+    print(f"[AUTO-SEND] {successful}/{len(results)} envíos ejecutados")
+    self.main_web.reload()
+    # Actualizar lista visual y guardar
+    _refresh_scheduled_fleets_list(self)
+    save_scheduled_fleets(self.scheduled_fleets)
+
+def _on_fleet_send_error(self, error_msg):
+    """Callback cuando hay error en el envío de flotas"""
+    print(f"[AUTO-SEND] Error: {error_msg}")
 
 def on_fleet_selection_changed():
     """Se ejecuta cuando se selecciona un elemento de la lista de misiones"""
@@ -463,7 +497,7 @@ def on_edit_fleet(self):
     
     # Eliminar de la lista
     self.scheduled_fleets.pop(current_row)
-    self._refresh_scheduled_fleets_list()
+    _refresh_scheduled_fleets_list(self)
     
     self._notif_label.setText(f"✏️ Misión editada - Guarda los cambios con 'Enviar Flotas'")
 
@@ -479,10 +513,10 @@ def on_delete_fleet(self):
     destination = fleet.get("destination", "?:?:?")
     
     self.scheduled_fleets.pop(current_row)
-    self._refresh_scheduled_fleets_list()
+    _refresh_scheduled_fleets_list(self)
     
     self._notif_label.setText(f"🗑️ Eliminada: {mission} → {destination}")
-    self.save_scheduled_fleets()
+    save_scheduled_fleets(self.scheduled_fleets)
 
 def _refresh_scheduled_fleets_list(self):
     """Actualiza la lista visual de misiones programadas"""
@@ -539,24 +573,6 @@ def update_fleet_origin_combo(self):
         index = self.fleet_planet_combo.findText(current_text)
         if index >= 0:
             self.fleet_planet_combo.setCurrentIndex(index)
-
-def update_fleets(self):
-    """Actualiza el estado de flotas en movimiento"""
-    try:
-        # Usar FleetWorker para obtener datos de flotas
-        fleet_worker = FleetWorker()  # Cargará la sesión automáticamente
-        result = fleet_worker.get_fleet_status()
-        
-        if result.get("success"):
-            self.fleets_data = result.get("fleets", [])
-            self.last_fleet_update = result.get("timestamp", time.time())
-            #print(f"[FLEETS] Actualizadas {len(self.fleets_data)} flotas activas")
-            self.refresh_main_panel()
-        else:
-            print(f"[FLEETS] Error: {result.get('error', 'Unknown')}")
-    
-    except Exception as e:
-        print(f"[FLEETS] Error en update_fleets: {e}")
 
 def save_scheduled_fleets(scheduled_fleets):
     """Guarda las misiones programadas en un archivo JSON"""

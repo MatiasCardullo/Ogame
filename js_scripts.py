@@ -12,51 +12,57 @@ in_game = """
 
 # --- Extrae metadatos del jugador / planeta ---
 extract_meta_script = """
-(function() {
-    const metas = document.getElementsByTagName('meta');
-    let data = {};
-    for (let m of metas) if (m.name && m.content) data[m.name] = m.content;
-    return data;
-})();
+    (function() {
+        const metas = document.getElementsByTagName('meta');
+        let data = {};
+        for (let m of metas) if (m.name && m.content) data[m.name] = m.content;
+        return data;
+    })();
 """
 
 extract_resources_script = """
-(function() {
-    try {
-        const scripts = document.getElementsByTagName('script');
-        for (let i = 0; i < scripts.length; i++) {
-            const txt = scripts[i].textContent || '';
-            const m = txt.match(/reloadResources\s*\(\s*(\{[\s\S]*?\})\s*\)\s*;/);
-            if (m && m[1]) {
-                const obj = JSON.parse(m[1]);
-                if (obj && obj.resources) {
-                    const r = obj.resources;
-                    const data = {
-                        metal: r.metal?.amount ?? 0,
-                        crystal: r.crystal?.amount ?? 0,
-                        deuterium: r.deuterium?.amount ?? 0,
-                        energy: r.energy?.amount ?? 0,
-                        prod_metal: r.metal?.production ?? 0,
-                        prod_crystal: r.crystal?.production ?? 0,
-                        prod_deuterium: r.deuterium?.production ?? 0,
-                        capacity_metal: r.metal?.storage ?? 0,
-                        capacity_crystal: r.crystal?.storage ?? 0,
-                        capacity_deuterium: r.deuterium?.storage ?? 0
-                    };
-                    console.log("[OGameDebug] Recursos extraídos:", data);
-                    return data;
+    (function() {
+        try {
+            const scripts = document.getElementsByTagName('script');
+            for (let i = 0; i < scripts.length; i++) {
+                const txt = scripts[i].textContent || '';
+                const m = txt.match(/reloadResources\s*\(\s*(\{[\s\S]*?\})\s*\)\s*;/);
+                if (m && m[1]) {
+                    const obj = JSON.parse(m[1]);
+                    if (obj && obj.resources) {
+                        const r = obj.resources;
+                        const data = {
+                            metal: r.metal?.amount ?? 0,
+                            crystal: r.crystal?.amount ?? 0,
+                            deuterium: r.deuterium?.amount ?? 0,
+                            energy: r.energy?.amount ?? 0,
+                            population: r.population?.amount ?? 0,
+                            food: r.food?.amount ?? 0,
+                            prod_metal: r.metal?.production ?? 0,
+                            prod_crystal: r.crystal?.production ?? 0,
+                            prod_deuterium: r.deuterium?.production ?? 0,
+                            prod_population: r.population?.growthRate ?? 0,
+                            prod_food: r.food?.production ?? 0,
+                            capacity_metal: r.metal?.storage ?? 0,
+                            capacity_crystal: r.crystal?.storage ?? 0,
+                            capacity_deuterium: r.deuterium?.storage ?? 0,
+                            capacity_population: r.population?.storage ?? 0,
+                            capacity_food: r.food?.storage ?? 0
+                        };
+                        console.log("[OGameDebug] Recursos extraídos:", data);
+                        return data;
+                    }
                 }
             }
+        } catch(e) {
+            console.log("[OGameDebug] Error al leer recursos:", e);
         }
-    } catch(e) {
-        console.log("[OGameDebug] Error al leer recursos:", e);
-    }
-    return {
-        metal:0, crystal:0, deuterium:0, energy:0,
-        prod_metal:0, prod_crystal:0, prod_deuterium:0,
-        capacity_metal:0, capacity_crystal:0, capacity_deuterium:0
-    };
-})();
+        return {
+            metal:0, crystal:0, deuterium:0, energy:0,
+            prod_metal:0, prod_crystal:0, prod_deuterium:0,
+            capacity_metal:0, capacity_crystal:0, capacity_deuterium:0
+        };
+    })();
 """
 
 # --- Extrae colas de construcción / investigación / flota / forma de vida ---
@@ -239,4 +245,137 @@ extract_auction_script = """
 
     return auction;
 })();
+"""
+
+extract_fleets_script = """
+    (function() {
+        const result = {
+            fleets: [],
+            fleetSlots: { current: 0, max: 0 },
+            expSlots: { current: 0, max: 0 }
+        };
+        
+        // Extraer slots de flotas y expediciones
+        const fleetSlotsSpan = document.querySelector('span.fleetSlots');
+        if (fleetSlotsSpan) {
+            const current = fleetSlotsSpan.querySelector('span.current');
+            const all = fleetSlotsSpan.querySelector('span.all');
+            if (current && all) {
+                result.fleetSlots.current = parseInt(current.textContent.trim());
+                result.fleetSlots.max = parseInt(all.textContent.trim());
+            }
+        }
+        
+        const expSlotsSpan = document.querySelector('span.expSlots');
+        if (expSlotsSpan) {
+            const current = expSlotsSpan.querySelector('span.current');
+            const all = expSlotsSpan.querySelector('span.all');
+            if (current && all) {
+                result.expSlots.current = parseInt(current.textContent.trim());
+                result.expSlots.max = parseInt(all.textContent.trim());
+            }
+        }
+        
+        // Buscar elementos con clase 'fleetDetails' (usado en fleet_page.html)
+        const fleetDivs = document.querySelectorAll('div.fleetDetails');
+        
+        if (fleetDivs.length === 0) {
+            console.log("[OGameDebug] No se encontraron flotas con div.fleetDetails");
+            return result;
+        }
+        
+        for (let fleetDiv of fleetDivs) {
+            try {
+                const fleet = {};
+                
+                // Obtener el atributo data-mission-type
+                const missionType = fleetDiv.getAttribute('data-mission-type');
+                const missionMap = {
+                    '1': 'Ataque',
+                    '3': 'Transporte',
+                    '4': 'Estacionamiento',
+                    '6': 'Espionaje',
+                    '8': 'Recolecta escombros',
+                    '15': 'Expedición',
+                    '18': 'Viaje de vuelta'
+                };
+                fleet.mission_name = missionMap[missionType] || `Misión ${missionType}`;
+                fleet.mission_type = missionType;
+                
+                // Detectar si es vuelo de regreso
+                fleet.return_flight = fleetDiv.getAttribute('data-return-flight') === 'true';
+                
+                // Origen - buscar en span.originCoords y span.originPlanet
+                const originCoords = fleetDiv.querySelector('span.originCoords a');
+                const originPlanet = fleetDiv.querySelector('span.originPlanet');
+                
+                fleet.origin = {
+                    coords: originCoords ? originCoords.textContent.trim() : '—',
+                    name: originPlanet ? originPlanet.textContent.trim().replace(/\\s+/g, ' ') : '—'
+                };
+                
+                // Destino - buscar en span.destinationCoords y span.destinationPlanet
+                const destCoords = fleetDiv.querySelector('span.destinationCoords a');
+                const destPlanet = fleetDiv.querySelector('span.destinationPlanet');
+                
+                // Extraer nombre del planeta del destino
+                let destName = '—';
+                if (destPlanet) {
+                    const textContent = destPlanet.textContent.trim();
+                    if (textContent) {
+                        destName = textContent;
+                    }
+                }
+                
+                // Si no hay nombre, intentar desde el tooltip title
+                if (destName === '—' && destCoords) {
+                    const title = destCoords.parentElement.getAttribute('title');
+                    if (title) {
+                        destName = title;
+                    }
+                }
+                
+                fleet.destination = {
+                    coords: destCoords ? destCoords.textContent.trim() : '—',
+                    name: destName
+                };
+                
+                // Contar naves desde el tooltip
+                let shipsCount = 0;
+                const fleetId = fleetDiv.id.replace('fleet', '');
+                const tooltipDiv = document.querySelector(`#bl${fleetId}`);
+                
+                if (tooltipDiv) {
+                    const shipRows = tooltipDiv.querySelectorAll('table.fleetinfo tr');
+                    for (let row of shipRows) {
+                        const valueCell = row.querySelector('td.value');
+                        if (valueCell) {
+                            const count = parseInt(valueCell.textContent.trim());
+                            if (!isNaN(count)) {
+                                shipsCount += count;
+                            }
+                        }
+                    }
+                }
+                fleet.ships_count = shipsCount;
+                
+                // Hora de llegada
+                const arrivalTime = fleetDiv.getAttribute('data-arrival-time');
+                fleet.arrival_time = arrivalTime ? parseInt(arrivalTime) : 0;
+                
+                // Reloj de llegada (absTime)
+                const absTimeSpan = fleetDiv.querySelector('span.absTime');
+                fleet.arrival_clock = absTimeSpan ? absTimeSpan.textContent.trim() : '—';
+                
+                result.fleets.push(fleet);
+                console.log("[OGameDebug] Flota extraída:", fleet);
+            } catch (e) {
+                console.log("[OGameDebug] Error extrayendo flota:", e);
+            }
+        }
+        
+        console.log("[OGameDebug] Total de flotas extraídas:", result.fleets.length);
+        console.log("[OGameDebug] Slots - Flotas:", result.fleetSlots, "Expediciones:", result.expSlots);
+        return result;
+    })();
 """

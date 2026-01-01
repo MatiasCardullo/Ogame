@@ -8,19 +8,18 @@ from PyQt6.QtCore import QUrl, QTimer
 from PyQt6.QtGui import QIcon
 from custom_page import CustomWebPage
 from debris_tab import create_debris_tab
-from fleet_tab import _refresh_scheduled_fleets_list, auto_send_scheduled_fleets, create_fleets_tab, save_scheduled_fleets, update_fleet_origin_combo, update_fleets
-from panel import refresh_fleets_panel, refresh_resources_panel, update_planet_data
+from fleet_tab import _refresh_scheduled_fleets_list, auto_send_scheduled_fleets, create_fleets_tab, save_scheduled_fleets, update_fleet_origin_combo
+from panel import refresh_resources_panel, update_planet_data
 from sprite_widget import SpriteWidget
 from datetime import timedelta
 import time, os, json
 from js_scripts import (
     in_game, extract_meta_script, extract_resources_script,
-    extract_queue_functions, extract_auction_script, extract_planet_array
+    extract_queue_functions, extract_auction_script, extract_planet_array, extract_fleets_script
 )
-from worker import FleetWorker
 
 logged = True
-#os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
+os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
 
 class MainWindow(QMainWindow):
     """Ventana principal de OGame."""
@@ -60,9 +59,13 @@ class MainWindow(QMainWindow):
             background-color: #000;
             color: #EEE;
         """)
-        self.main_panel.setLayout(main_layout)
 
-        # Panel Principal
+        # DATA
+        # planets_data keyed by planet_key (name|coords) -> dict(coords, resources, queues(list), last_update)
+        # Esto permite tener múltiples planetas con el mismo nombre pero diferentes coordenadas
+        self.planets_data = {}
+        # global queues (research, etc.) keyed by queue id
+        self.research_data = {}
         
         # Contenedor horizontal para sprite_widget + QWebEngineView
         top_container = QWidget()
@@ -74,21 +77,104 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self.sprite_widget, 1)  # stretch factor = 1 para que ocupe espacio disponible
         
         # QWebEngineView integrado (el navegador del planeta actual)
-        self.web_layout = QVBoxLayout()
-        self.main_web = self.web_engine(self.profile, self.base_url)
-        self.main_web.setZoomFactor(0.7)
-        self.main_web.setMinimumWidth(1000)
-        self.toolbar = QHBoxLayout()
-        for text, func in [("<", self.main_web.back), (">", self.main_web.forward), ("↻", self.main_web.reload), ("💾", self.save_html)]:
+        self.main_web_layout = QVBoxLayout()
+        
+        # Define pages with their URLs
+        self.pages_config = [
+            ("Main", self.base_url),
+            ("Flotas", f"{self.base_url}?page=ingame&component=movement"),
+            ("Imperio", f"{self.base_url}?page=standalone&component=empire"),
+            ("Subasta", f"{self.base_url}?page=ingame&component=traderOverview#animation=false&page=traderAuctioneer")
+        ]
+        
+        # Create web views for all pages
+        # self.pages_views[i] = {'title': ..., 'url': ..., 'web': ..., 'container': ...}
+        self.pages_views = []
+        for i, (title, url) in enumerate(self.pages_config):
+            web = self.web_engine(self.profile, url)
+            container = QWidget()
+            c_layout = QVBoxLayout()
+            c_layout.setContentsMargins(0, 0, 0, 0)
+            c_layout.addWidget(web)
+            container.setLayout(c_layout)
+            
+            # Conectar extracción de flotas si es la página de Flotas (index 1)
+            if i == 1:
+                web.loadFinished.connect(lambda: self.on_fleets_page_loaded())
+            
+            self.pages_views.append({
+                'index': i,
+                'title': title,
+                'url': url,
+                'web': web,
+                'container': container
+            })
+        
+        # Page 0 (Main) starts large in the main area
+        self.main_web = self.pages_views[0]['web']
+        self.main_web.setZoomFactor(0.75)
+        self.main_web.setMinimumWidth(800)
+        self.active_page_index = 0
+
+        # Navbar uses wrapper actions so it always targets the active `self.main_web`
+        self.navbar = QHBoxLayout()
+        for text, action in [("<", "back"), (">", "forward"), ("↻", "reload"), ("💾", "save")]:
             btn = QPushButton(text)
             btn.setBaseSize(20, 20)
-            btn.clicked.connect(func)
-            self.toolbar.addWidget(btn)
-        self.web_layout.addLayout(self.toolbar)
-        self.web_layout.addWidget(self.main_web)
-        top_layout.addLayout(self.web_layout)
-                
-        # Configurar extracción de datos en main_web
+            if action == "save":
+                btn.clicked.connect(self.save_html)
+            else:
+                btn.clicked.connect(lambda _, act=action: self.nav_action(act))
+            self.navbar.addWidget(btn)
+
+        self.main_web_layout.addLayout(self.navbar)
+        self.main_web_layout.addWidget(self.main_web)
+
+        # Side bar with custom tabs (VBoxLayout)
+        side_bar = QWidget()
+        side_bar_layout = QVBoxLayout()
+        side_bar_layout.setContentsMargins(0, 0, 0, 0)
+        side_bar_layout.setSpacing(0)
+        
+        self.tab_buttons = []
+        for page_info in self.pages_views:
+            idx = page_info['index']
+            title = page_info['title']
+            web = page_info['web']
+            
+            # Tab button (clickable header)
+            tab_btn = QPushButton(title)
+            tab_btn.setStyleSheet("text-align: left; padding: 5px;")
+            tab_btn.clicked.connect(lambda checked, i=idx: self.on_tab_clicked(i))
+            
+            # Container for small preview
+            preview_container = QWidget()
+            preview_layout = QVBoxLayout()
+            preview_layout.setContentsMargins(0, 0, 0, 0)
+            preview_layout.setSpacing(0)
+            preview_layout.addWidget(web)
+            preview_container.setLayout(preview_layout)
+            
+            # Set zoom for all pages except the active one
+            if idx != 0:
+                web.setZoomFactor(0.25)
+                web.setMinimumHeight(110)
+                web.setMinimumWidth(220)
+            
+            side_bar_layout.addWidget(tab_btn)
+            side_bar_layout.addWidget(preview_container)
+            
+            self.tab_buttons.append(tab_btn)
+            page_info['preview_container'] = preview_container
+        
+        side_bar_layout.addStretch()
+        side_bar.setLayout(side_bar_layout)
+        side_bar.setFixedWidth(240)
+
+        top_layout.addLayout(self.main_web_layout, 1)
+        top_layout.addWidget(side_bar)
+
+        # Configurar extracción de datos en main_web (only for Main tab)
         self.setup_main_web_extraction()
         
         top_container.setLayout(top_layout)
@@ -135,7 +221,8 @@ class MainWindow(QMainWindow):
         footer_layout.addLayout(update_interval_layout)
         footer_layout.addWidget(self._notif_label)
         main_layout.addLayout(footer_layout)
-        
+
+        self.main_panel.setLayout(main_layout)
         self.tabs.addTab(self.main_panel, "📊 Panel Principal")
 
         # ----- Subasta -----
@@ -158,13 +245,6 @@ class MainWindow(QMainWindow):
         self.tray_icon.setIcon(QIcon.fromTheme("applications-games"))
         self.tray_icon.setVisible(True)
 
-        # DATA
-        # planets_data keyed by planet_key (name|coords) -> dict(coords, resources, queues(list), last_update)
-        # Esto permite tener múltiples planetas con el mismo nombre pero diferentes coordenadas
-        self.planets_data = {}
-        # global queues (research, etc.) keyed by queue id
-        self.research_data = {}
-
         # Intervalo de actualización (en ms)
         self.current_update_interval = 1000  # Default: 1 segundos
         self.panel_timer = QTimer(self)
@@ -181,16 +261,17 @@ class MainWindow(QMainWindow):
         self.queue_timer.setInterval(1000)
         self.queue_timer.timeout.connect(self.check_queues)
         self.queue_timer.start()
-        # Fleet update timer
-        self.fleet_timer = QTimer(self)
-        self.fleet_timer.setInterval(60000)
-        self.fleet_timer.timeout.connect(lambda: update_fleets(self))
-        self.fleet_timer.start()
 
         self.fleet_sender_timer = QTimer(self)
-        self.fleet_sender_timer.setInterval(5000)
+        self.fleet_sender_timer.setInterval(30000)
         self.fleet_sender_timer.timeout.connect(lambda: auto_send_scheduled_fleets(self))
         self.fleet_sender_timer.start()
+
+        # Timer para actualizar flotas desde pages_views[1]
+        self.fleets_update_timer = QTimer(self)
+        self.fleets_update_timer.setInterval(60000)  # Cada 1 minuto
+        self.fleets_update_timer.timeout.connect(self.update_fleets_from_page)
+        self.fleets_update_timer.start()
 
         self.notified_queues = set()
         self.popups = []
@@ -200,6 +281,8 @@ class MainWindow(QMainWindow):
         # Fleet data storage
         self.fleets_data = []
         self.last_fleet_update = 0
+        self.fleet_slots = {"current": 0, "max": 0}
+        self.exp_slots = {"current": 0, "max": 0}
         
         # Envíos programados de naves
         self.scheduled_fleets = []
@@ -266,6 +349,21 @@ class MainWindow(QMainWindow):
         web.load(QUrl(url))
         return web
 
+    def nav_action(self, action):
+        """Wrapper to call navigation on the active main web view."""
+        try:
+            if not hasattr(self, 'main_web') or self.main_web is None:
+                return
+            if action == 'back':
+                self.main_web.back()
+            elif action == 'forward':
+                self.main_web.forward()
+            elif action == 'reload':
+                self.main_web.reload()
+        except Exception as e:
+            print('[DEBUG] nav_action error:', e)
+
+
     def on_update_interval_changed(self):
         """Actualiza el intervalo de los timers cuando el usuario cambia la selección."""
         new_interval = self.update_interval_combo.currentData()
@@ -280,8 +378,16 @@ class MainWindow(QMainWindow):
         """Configura main_web para extraer datos automáticamente cuando carga una página."""
         if not hasattr(self, 'main_web'):
             return
-        
+
+        # Ensure we don't attach multiple times
+        try:
+            self.main_web.loadFinished.disconnect(self.on_main_web_loaded)
+        except Exception:
+            pass
+
         self.main_web.loadFinished.connect(self.on_main_web_loaded)
+
+        # Keep navbar and other controls in sync (they call self.main_web dynamically)
 
     def on_main_web_loaded(self):
         """Cuando main_web carga una página, extrae datos si estamos en el juego."""
@@ -299,12 +405,75 @@ class MainWindow(QMainWindow):
                     with open(path, "w", encoding="utf-8") as f:
                         f.write(html)
             self.main_web.page().toHtml(handle_html)
+
+    def on_tab_clicked(self, clicked_index):
+        """Swap the clicked page into the main area, move current main to its tab."""
+        try:
+            if clicked_index == self.active_page_index:
+                return  # Same page, no swap needed
+
+            # Get the current large view and the clicked small view
+            current_large = self.main_web
+            current_page_idx = self.active_page_index
+
+            clicked_page = self.pages_views[clicked_index]
+            clicked_web = clicked_page['web']
+            clicked_container = clicked_page['preview_container']
+
+            # Get the preview container for the current large page
+            current_page = self.pages_views[current_page_idx]
+            current_container = current_page['preview_container']
+
+            # Remove current large from main layout
+            try:
+                self.main_web_layout.removeWidget(current_large)
+            except Exception:
+                pass
+            current_large.setParent(None)
+
+            # Remove clicked small from its preview container
+            try:
+                clicked_container.layout().removeWidget(clicked_web)
+            except Exception:
+                pass
+            clicked_web.setParent(None)
+
+            # Move current large to its preview container (shrink to 0.25)
+            current_large.setZoomFactor(0.25)
+            current_large.setMinimumHeight(110)
+            current_large.setMinimumWidth(220)
+            current_container.layout().addWidget(current_large)
+
+            # Move clicked small to main area (enlarge to 0.75)
+            clicked_web.setZoomFactor(0.75)
+            clicked_web.setMinimumWidth(800)
+            self.main_web_layout.addWidget(clicked_web)
+
+            # Update references
+            self.main_web = clicked_web
+            self.active_page_index = clicked_index
+
+            # Only attach extraction if switching to Main tab (index 0)
+            if clicked_index == 0:
+                self.setup_main_web_extraction()
+            else:
+                # Disconnect extraction from non-Main tabs
+                try:
+                    self.main_web.loadFinished.disconnect(self.on_main_web_loaded)
+                except Exception:
+                    pass
+
+        except Exception as e:
+            print('[DEBUG] on_tab_clicked error:', e)
     
     def handle_main_web_meta(self, data):
         """Maneja metadata del planeta en main_web."""
-        if not data:
+        if data:
+            print(data)
+        else:
+            print("main web - no data")
             return
-                
+             
         player = data.get('ogame-player-name', '—')
         universe = data.get('ogame-universe-name', '—')
         coords = data.get('ogame-planet-coordinates', '—')
@@ -360,6 +529,7 @@ class MainWindow(QMainWindow):
         """
         
         def after_detect(det):
+            print(det)
             if not det:
                 update_planet_data(self,
                     planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
@@ -547,11 +717,6 @@ class MainWindow(QMainWindow):
         def done(result):
             print("[DEBUG] Primer planeta cargado, comprobando cache de planetas...")
             self.tabs.setCurrentWidget(self.main_panel)
-            self.login.hide()
-            #try:
-            #    self.create_secondary_views()
-            #except Exception as e:
-                #print("[DEBUG] Error creando vistas secundarias:", e)
 
             # Intentar cargar datos de planetas desde cache
             cache_loaded = self.load_data()
@@ -709,13 +874,56 @@ class MainWindow(QMainWindow):
         # avanzar índice inmediatamente
         self.current_planet_index += 1
 
+    def on_fleets_page_loaded(self):
+        """Extrae información de flotas cuando carga pages_views[1]"""
+        if not hasattr(self, 'pages_views') or len(self.pages_views) < 2:
+            return
+        
+        fleets_web = self.pages_views[1]['web']
+        fleets_web.page().runJavaScript(extract_fleets_script, self.handle_fleets_data)
+
+    def update_fleets_from_page(self):
+        """Actualiza fleets_data extrayendo datos de pages_views[1]"""
+        if not hasattr(self, 'pages_views') or len(self.pages_views) < 2:
+            return
+        
+        fleets_web = self.pages_views[1]['web']
+        fleets_web.page().runJavaScript(extract_fleets_script, self.handle_fleets_data)
+
+    def handle_fleets_data(self, data):
+        """Procesa y almacena los datos de flotas extraídos del HTML"""
+        if not data:
+            self.fleets_data = []
+            self.fleet_slots = {"current": 0, "max": 0}
+            self.exp_slots = {"current": 0, "max": 0}
+            return
+        
+        if isinstance(data, dict) and "fleets" in data:
+            self.fleets_data = data.get("fleets", [])
+            self.fleet_slots = data.get("fleetSlots", {"current": 0, "max": 0})
+            self.exp_slots = data.get("expSlots", {"current": 0, "max": 0})
+            print(f"[FLEETS] ✅ Cargadas {len(self.fleets_data)} flotas desde pages_views[1]")
+            print(f"[FLEETS] Slots - Flotas: {self.fleet_slots['current']}/{self.fleet_slots['max']}, Expediciones: {self.exp_slots['current']}/{self.exp_slots['max']}")
+            # Actualizar timestamp
+            self.last_fleet_update = time.time()
+        elif isinstance(data, list):
+            # Compatibilidad hacia atrás si por alguna razón devuelve una lista
+            self.fleets_data = data
+            self.fleet_slots = {"current": 0, "max": 0}
+            self.exp_slots = {"current": 0, "max": 0}
+            print(f"[FLEETS] ✅ Cargadas {len(data)} flotas (formato legado)")
+        else:
+            print("[FLEETS] ⚠️  Formato de datos de flotas inválido")
+            self.fleets_data = []
+            self.fleet_slots = {"current": 0, "max": 0}
+            self.exp_slots = {"current": 0, "max": 0}
+
     # ====================================================================
     #  PANEL PRINCIPAL
     # ====================================================================
     def refresh_main_panel(self):
-        """Actualiza ambas secciones del panel (recursos y flotas)"""
+        """Actualiza la sección del panel de recursos"""
         refresh_resources_panel(self)
-        refresh_fleets_panel(self)
 
     # ====================================================================
     #  Incremento pasivo

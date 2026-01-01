@@ -193,57 +193,8 @@ def refresh_resources_panel(self):
 
     self.resources_label.setHtml(html)
 
-def refresh_fleets_panel(self):
-    """Actualiza la pestaña de Flotas en Movimiento"""
-    html = """
-    <style>
-        body { background-color: #000; color: #EEE; font-family: Consolas; }
-        table { border-collapse: collapse; margin-top: 10px; width: 100%; }
-        th { background-color: #222; color: #0f0; border: 1px solid #333; padding: 8px; text-align: center; }
-        td { background-color: #111; color: #EEE; border: 1px solid #333; padding: 6px; font-size: 12px; }
-        .bar { font-family: monospace; }
-    </style>
-    <h2>🚀 Flotas en Movimiento</h2>
-    """
-
-    if not self.fleets_data:
-        html += "<p style='color: #666;'>📭 Sin flotas en movimiento</p>"
-        self.fleets_label.setHtml(html)
-        return
-
-    html += "<table><tr><th>Misión</th><th>Origen</th><th>Destino</th><th>Naves</th><th>Llegada</th><th>Estado</th></tr>"
-    
-    now = int(time.time())
-    
-    for fleet in self.fleets_data:
-        mission = fleet.get('mission_name', '—')
-        origin = f"{fleet['origin']['name']}<br>{fleet['origin']['coords']}"
-        dest = f"{fleet['destination']['name']}<br>{fleet['destination']['coords']}"
-        ships_count = fleet.get('ships_count', 0)
-        arrival_clock = fleet.get('arrival_clock', '—')
-        arrival_time = fleet.get('arrival_time', 0)
-        
-        # Calcular tiempo faltante
-        remaining = max(0, arrival_time - now)
-        time_remaining = time_str(remaining, self.current_update_interval > 1000) if remaining > 0 else "Llegó"
-        
-        # Color según estado
-        color = progress_color((remaining / arrival_time) * 100)
-        
-        # Indicador de regreso
-        return_indicator = " (R)" if fleet.get('return_flight', False) else ""
-        
-        html += f"<tr><td>{mission}{return_indicator}</td>"
-        html += f"<td><small>{origin}</small></td>"
-        html += f"<td><small>{dest}</small></td>"
-        html += f"<td>{ships_count}</td>"
-        html += f"<td><small>{arrival_clock}</small></td>"
-        html += f"<td><span style='color: {color}; font-weight: bold;'>{time_remaining}</span></td>"
-        html += "</tr>"
-    
-    html += "</table>"
-    
-    self.fleets_label.setHtml(html)
+# Función removida: refresh_fleets_panel
+# Las flotas ahora se muestran en la página de flotas de pages_views[1]
 
 # ====================================================================
 #  UPDATE PLANET DATA (API nueva con queues que incluyen id)
