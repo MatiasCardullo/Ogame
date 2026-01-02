@@ -1,4 +1,4 @@
-import time, json, requests, browser_cookie3
+import time, json, requests, browser_cookie3, sys, traceback
 
 def load_ogame_session(profile_path):
     cj = browser_cookie3.chrome(
@@ -74,6 +74,7 @@ def parse_galaxy_response(text):
         if entry:
             parsed[str(pos)] = entry
 
+    parsed["updated"] = time.time()
     return token, parsed
 
 class GalaxyWorker:
@@ -149,9 +150,30 @@ class GalaxyWorker:
                 data[str(g)][str(s)] = parsed
                 time.sleep(0.5)
             time.sleep(0.1)
-        data["time"] = time.time()
         # Guardar en archivo específico para esta galaxia
         output_file = f"galaxy_data_g{g}.json"
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         print(f"[GALAXY {self.galaxy}] Guardado en {output_file}")
+
+if __name__ == "__main__":
+    
+    if len(sys.argv) < 2:
+        print("Uso: python galaxy_worker.py <numero_galaxia>")
+        sys.exit(1)
+    
+    try:
+        galaxy_num = int(sys.argv[1])
+        print(f"[GalaxyWorker] Iniciando escaneo de galaxia {galaxy_num}")
+        worker = GalaxyWorker(galaxy_num)
+        worker.run()
+        print(f"[GalaxyWorker] Galaxia {galaxy_num} completada")
+    except ValueError:
+        print(f"Error: '{sys.argv[1]}' no es un número válido")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[GalaxyWorker] Error en galaxia: {e}")
+        traceback.print_exc()
+        sys.exit(1)
+    
+    input("\nPresiona Enter para cerrar esta consola...")
