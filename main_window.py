@@ -15,7 +15,7 @@ from datetime import timedelta
 import time, os, json
 from js_scripts import (
     in_game, extract_meta_script, extract_resources_script,
-    extract_queue_functions, extract_auction_script, extract_planet_array, extract_fleets_script
+    extract_queue_functions, extract_planet_array, extract_fleets_script
 )
 
 logged = True
@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
         
         # Define pages with their URLs
         self.pages_config = [
-            ("Main", self.base_url),
+            ("Main", f"{self.base_url}?page=ingame&component=overview"),
             ("Flotas", f"{self.base_url}?page=ingame&component=movement"),
             ("Imperio", f"{self.base_url}?page=standalone&component=empire"),
             ("Subasta", f"{self.base_url}?page=ingame&component=traderOverview#animation=false&page=traderAuctioneer")
@@ -102,6 +102,9 @@ class MainWindow(QMainWindow):
             if i == 1:
                 web.loadFinished.connect(lambda: self.on_fleets_page_loaded())
             
+            # Monitorear cambios de URL para detectar desconexión
+            web.urlChanged.connect(lambda url, page_idx=i: self.check_disconnection(url, page_idx))
+            
             self.pages_views.append({
                 'index': i,
                 'title': title,
@@ -118,11 +121,13 @@ class MainWindow(QMainWindow):
 
         # Navbar uses wrapper actions so it always targets the active `self.main_web`
         self.navbar = QHBoxLayout()
-        for text, action in [("<", "back"), (">", "forward"), ("↻", "reload"), ("💾", "save")]:
+        for text, action in [("🏠", "home"), ("<", "back"), (">", "forward"), ("↻", "reload"), ("💾", "save")]:
             btn = QPushButton(text)
             btn.setBaseSize(20, 20)
             if action == "save":
                 btn.clicked.connect(self.save_html)
+            elif action == "home":
+                btn.clicked.connect(self.reload_default_url)
             else:
                 btn.clicked.connect(lambda _, act=action: self.nav_action(act))
             self.navbar.addWidget(btn)
@@ -225,19 +230,6 @@ class MainWindow(QMainWindow):
         self.main_panel.setLayout(main_layout)
         self.tabs.addTab(self.main_panel, "📊 Panel Principal")
 
-        # ----- Subasta -----
-        self.auction_tab = QWidget()
-        auction_layout = QVBoxLayout()
-        self.auction_text = QTextEdit()
-        self.auction_text.setReadOnly(True)
-        auction_layout.addWidget(QLabel("🏆 Subasta"))
-        auction_layout.addWidget(self.auction_text)
-        self.auction_refresh_btn = QPushButton("Actualizar subasta")
-        self.auction_refresh_btn.clicked.connect(self.update_auction)
-        auction_layout.addWidget(self.auction_refresh_btn)
-        self.auction_tab.setLayout(auction_layout)
-        self.tabs.addTab(self.auction_tab, "🏆 Subasta")
-
         self.setCentralWidget(self.tabs)
 
         # Tray icon
@@ -263,7 +255,7 @@ class MainWindow(QMainWindow):
         self.queue_timer.start()
 
         self.fleet_sender_timer = QTimer(self)
-        self.fleet_sender_timer.setInterval(30000)
+        self.fleet_sender_timer.setInterval(60000)
         self.fleet_sender_timer.timeout.connect(lambda: auto_send_scheduled_fleets(self))
         self.fleet_sender_timer.start()
 
@@ -363,6 +355,53 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print('[DEBUG] nav_action error:', e)
 
+    def check_disconnection(self, url, page_idx):
+        """Detecta si la URL cambió a la página de lobby (desconexión)."""
+        try:
+            url_str = url.toString() if hasattr(url, 'toString') else str(url)
+            print(f"[DEBUG] pages_views[{page_idx}] URL cambió a: {url_str}")
+            
+            # Detectar si es la URL de lobby (desconexión)
+            if "lobby.ogame.gameforge.com" in url_str and "hub" in url_str:
+                print(f"[DEBUG] ⚠️  Desconexión detectada en página {page_idx}! Ejecutando on_open()...")
+                QTimer.singleShot(500, self.on_open)
+        except Exception as e:
+            print(f'[DEBUG] check_disconnection error: {e}')
+
+    def reload_default_url(self):
+        """Recarga la URL preestablecida de la página actualmente seleccionada."""
+        try:
+            if not hasattr(self, 'active_page_index') or not hasattr(self, 'pages_views'):
+                return
+            
+            # Obtener la página activa
+            active_page = self.pages_views[self.active_page_index]
+            url = active_page['url']
+            web = active_page['web']
+            
+            print(f"[DEBUG] Recargando página activa {self.active_page_index}: {url}")
+            web.load(QUrl(url))
+        except Exception as e:
+            print(f'[DEBUG] reload_default_urls error: {e}')
+
+    def reload_other_pages_urls(self):
+        """Recarga las URLs preestablecidas de todas las páginas excepto Main (index 0)."""
+        try:
+            if not hasattr(self, 'pages_views'):
+                return
+            
+            print("[DEBUG] Recargando URLs de páginas secundarias...")
+            for i, page_info in enumerate(self.pages_views):
+                # Saltar la página Main (index 0)
+                if i == 0:
+                    continue
+                
+                url = page_info['url']
+                web = page_info['web']
+                print(f"[DEBUG] Cargando página {i}: {url}")
+                web.load(QUrl(url))
+        except Exception as e:
+            print(f'[DEBUG] reload_other_pages_urls error: {e}')
 
     def on_update_interval_changed(self):
         """Actualiza el intervalo de los timers cuando el usuario cambia la selección."""
@@ -469,7 +508,7 @@ class MainWindow(QMainWindow):
     def handle_main_web_meta(self, data):
         """Maneja metadata del planeta en main_web."""
         if data:
-            print(data)
+            """{'ogame-alliance-id': '500019', 'ogame-alliance-name': 'Invicta Roma', 'ogame-alliance-tag': 'INV', 'ogame-donut-galaxy': '1', 'ogame-donut-system': '1', 'ogame-language': 'ar', 'ogame-planet-coordinates': '1:34:2', 'ogame-planet-id': '33621880', 'ogame-planet-name': 'Fulgora', 'ogame-planet-type': 'planet', 'ogame-player-id': '100170', 'ogame-player-name': 'DrNexxus97', 'ogame-session': '71dcd60823aab0bc1445b3dfa765d2838a354ad9', 'ogame-timestamp': '1767321157', 'ogame-universe': 's163-ar.ogame.gameforge.com', 'ogame-universe-name': 'Kalyke', 'ogame-universe-speed': '4', 'ogame-universe-speed-fleet-holding': '1', 'ogame-universe-speed-fleet-peaceful': '4', 'ogame-universe-speed-fleet-war': '1', 'ogame-version': '12.5.0-r3'}"""
         else:
             print("main web - no data")
             return
@@ -529,7 +568,7 @@ class MainWindow(QMainWindow):
         """
         
         def after_detect(det):
-            print(det)
+            #print(det)
             if not det:
                 update_planet_data(self,
                     planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
@@ -727,6 +766,9 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(1000, self.load_other_planets)
             else:
                 print("[DEBUG] ✅ Datos de planetas cargados desde cache")
+            
+            # Timer para recargar las páginas secundarias después de on_open
+            QTimer.singleShot(5000, self.reload_other_pages_urls)
 
         QTimer.singleShot(3000, lambda: self.login.page().runJavaScript(js, done))
 
@@ -994,59 +1036,6 @@ class MainWindow(QMainWindow):
                 self.notified_queues.remove(qid)
             except KeyError:
                 pass
-
-    # ====================================================================
-    #  SUBASTA
-    # ====================================================================
-    def update_auction(self):
-        hidden_web = QWebEngineView()
-        hidden_page = CustomWebPage(self.profile, hidden_web, main_window=self)
-        hidden_web.setPage(hidden_page)
-
-        def after_load():
-            QTimer.singleShot(1500, lambda:
-                hidden_web.page().runJavaScript(
-                    extract_auction_script,
-                    self.handle_auction_data
-                )
-            )
-
-        hidden_web.loadFinished.connect(after_load)
-
-        current_url = self.web.url().toString()
-        base_url = current_url.split("?")[0]
-        auction_url = base_url + "?page=ingame&component=traderAuctioneer"
-
-        hidden_web.load(QUrl(auction_url))
-
-        def handle_auction_data(data):
-            if not data:
-                return
-
-            status = data.get('status', '—')
-            item = data.get('item', '—')
-            bid = data.get('currentBid', '—')
-            bidder = data.get('highestBidder', '—')
-            time_left = data.get('timeLeft', '—')
-
-            if str(time_left).isdigit():
-                try:
-                    seconds = int(time_left)
-                    td = str(timedelta(seconds=seconds))
-                    h, m, s = td.split(":")
-                    time_left = f"{int(h)}h {int(m)}m"
-                except:
-                    pass
-
-            texto = (
-                f"{status}\n"
-                f"Tiempo restante: {time_left}\n"
-                f"Item: {item}\n"
-                f"Oferta: {bid}\n"
-                f"Mejor postor: {bidder}"
-            )
-
-            self.auction_text.setPlainText(texto)
 
     # ====================================================================
     #  NOTIFICACIONES

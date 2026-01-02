@@ -44,13 +44,13 @@ class FleetSendWorker(QObject):
 
 def create_fleets_tab(self):
     fleets_tab = QWidget()
-    fleets_layout = QVBoxLayout()
-    fleets_layout.setContentsMargins(5, 5, 5, 5)
-    fleets_layout.setSpacing(10)
+    fleets_layout = QHBoxLayout()
 
     # Programador de naves
     scheduler = create_fleet_scheduler_panel(self)
     fleets_layout.addWidget(scheduler)
+    history = create_panel(self)
+    fleets_layout.addWidget(history)
     
     fleets_tab.setLayout(fleets_layout)
     return fleets_tab
@@ -197,6 +197,16 @@ def create_fleet_scheduler_panel(self):
     timing_group.setLayout(timing_form)
     scheduler_layout.addWidget(timing_group)
     
+    # Stretch para que el resto del espacio sea vacío
+    scheduler_layout.addStretch()
+    
+    scheduler_widget.setLayout(scheduler_layout)
+    return scheduler_widget
+
+def create_panel(self):
+    history_widget = QWidget()
+    history_layout = QVBoxLayout()
+    history_layout.setContentsMargins(5, 5, 5, 5)
     # Botones de acción
     buttons_layout = QHBoxLayout()
     
@@ -230,17 +240,17 @@ def create_fleet_scheduler_panel(self):
     clear_btn.clicked.connect(lambda: on_clear_fleet_form(self))
     buttons_layout.addWidget(clear_btn)
     
-    scheduler_layout.addLayout(buttons_layout)
+    history_layout.addLayout(buttons_layout)
     
     # Historial de misiones programadas
     history_label = QLabel("📜 Misiones Programadas:")
     history_label.setStyleSheet("font-weight: bold; margin-top: 15px;")
-    scheduler_layout.addWidget(history_label)
+    history_layout.addWidget(history_label)
     
     self.fleet_scheduled_list = QListWidget()
     self.fleet_scheduled_list.setMaximumHeight(120)
     self.fleet_scheduled_list.itemSelectionChanged.connect(on_fleet_selection_changed)
-    scheduler_layout.addWidget(self.fleet_scheduled_list)
+    history_layout.addWidget(self.fleet_scheduled_list)
     
     # Botones de editar y eliminar
     fleet_actions_layout = QHBoxLayout()
@@ -280,13 +290,12 @@ def create_fleet_scheduler_panel(self):
     fleet_actions_layout.addWidget(delete_btn)
     
     fleet_actions_layout.addStretch()
-    scheduler_layout.addLayout(fleet_actions_layout)
-    
+    history_layout.addLayout(fleet_actions_layout)
+
     # Stretch para que el resto del espacio sea vacío
-    scheduler_layout.addStretch()
-    
-    scheduler_widget.setLayout(scheduler_layout)
-    return scheduler_widget
+    history_layout.addStretch()
+    history_widget.setLayout(history_layout)
+    return history_widget
 
 def on_fleet_mission_changed(self, mission_text):
     """Actualiza opciones según la misión seleccionada"""
@@ -447,7 +456,7 @@ def _on_fleet_send_success(self, results):
     """Callback cuando el envío de flotas es exitoso"""
     successful = sum(1 for r in results if r["success"])
     print(f"[AUTO-SEND] {successful}/{len(results)} envíos ejecutados")
-    self.main_web.reload()
+    self.pages_views[1]['web'].reload()
     # Actualizar lista visual y guardar
     _refresh_scheduled_fleets_list(self)
     save_scheduled_fleets(self.scheduled_fleets)
