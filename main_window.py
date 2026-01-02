@@ -11,7 +11,6 @@ from debris_tab import create_debris_tab
 from fleet_tab import _refresh_scheduled_fleets_list, auto_send_scheduled_fleets, create_fleets_tab, save_scheduled_fleets, update_fleet_origin_combo
 from panel import refresh_resources_panel, update_planet_data
 from sprite_widget import SpriteWidget
-from datetime import timedelta
 import time, os, json
 from js_scripts import (
     in_game, extract_meta_script, extract_resources_script,
@@ -46,7 +45,7 @@ class MainWindow(QMainWindow):
 
         # Login
         self.login = self.web_engine(profile, url)
-        if logged :
+        if not logged :
             self.login.loadFinished.connect(self.on_open)
         self.browser_box.addWidget(self.login)
         self.browser_tab.setLayout(self.browser_box)
@@ -948,12 +947,11 @@ class MainWindow(QMainWindow):
             print(f"[FLEETS] Slots - Flotas: {self.fleet_slots['current']}/{self.fleet_slots['max']}, Expediciones: {self.exp_slots['current']}/{self.exp_slots['max']}")
             # Actualizar timestamp
             self.last_fleet_update = time.time()
-        elif isinstance(data, list):
-            # Compatibilidad hacia atrás si por alguna razón devuelve una lista
-            self.fleets_data = data
-            self.fleet_slots = {"current": 0, "max": 0}
-            self.exp_slots = {"current": 0, "max": 0}
-            print(f"[FLEETS] ✅ Cargadas {len(data)} flotas (formato legado)")
+            try:
+                with open("fleets_data.json", "w", encoding="utf-8") as f:
+                    json.dump(self.fleets_data, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                print(f"⚠️ Error guardando misiones: {e}")
         else:
             print("[FLEETS] ⚠️  Formato de datos de flotas inválido")
             self.fleets_data = []
@@ -1054,7 +1052,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Guardar datos al cerrar la aplicación"""
+        self.login.page().deleteLater()
+        for page in self.pages_views:
+            web = page['web']
+            web.page().deleteLater()
         save_scheduled_fleets(self.scheduled_fleets)
         self.save_research_data()
         self.save_planets_data()
-        super().closeEvent(event)
+        event.accept()

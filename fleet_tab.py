@@ -388,6 +388,7 @@ def on_send_fleet_clicked(self):
         "id": len(self.scheduled_fleets),
         "mission": mission,
         "origin": origin_text,
+        "origin_id": self.fleet_planet_combo.currentData(),
         "destination": coords,
         "ships": ships_dict,
         "total_ships": total_ships,

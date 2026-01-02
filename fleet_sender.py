@@ -193,12 +193,15 @@ def send_fleet(fleet_data, profile_path="profile_data"):
         if total_ships == 0:
             return False, "No hay naves para enviar"
         
-        # TO DO pasar el id del planeta
+        # Usar el id del planeta origen si fue provisto en fleet_data (campo origin_id)
+        cp_val = fleet_data.get("origin_id") if isinstance(fleet_data, dict) else None
+        cp_str = str(int(cp_val))
+
         # URL del endpoint - IMPORTANTE: incluir &ajax=1&asJson=1 para JSON response
-        url = "https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame&component=fleetdispatch&cp=33621880&action=sendFleet&ajax=1&asJson=1"
+        url = f"https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame&component=fleetdispatch&cp={cp_str}&action=sendFleet&ajax=1&asJson=1"
         # Actualizar Referer para que sea realista
         session.headers.update({
-            "Referer": f"https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame&component=fleetdispatch&cp=33621880&mission={mission_id}&position={p}&type=1&galaxy={g}&system={s}"
+            "Referer": f"https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame&component=fleetdispatch&cp={cp_str}&mission={mission_id}&position={p}&type=1&galaxy={g}&system={s}"
         })
         
         print(f"[FLEET] Enviando {total_ships} naves a {g}:{s}:{p}")
@@ -269,10 +272,6 @@ def send_scheduled_fleets(scheduled_fleets, profile_path="profile_data", fleet_s
     """
     results = []
     current_time = time.time()
-
-    # Usar valores por defecto si no se proporcionan
-    fleet_slots = fleet_slots or {"current": 0, "max": 0}
-    exp_slots = exp_slots or {"current": 0, "max": 0}
     
     # Calcular slots disponibles
     available_fleet_slots = fleet_slots.get("max", 0) - fleet_slots.get("current", 0)

@@ -328,7 +328,7 @@ extract_fleets_script = """
             }
         }
         
-        // Buscar elementos con clase 'fleetDetails' (usado en fleet_page.html)
+        // Buscar elementos con clase 'fleetDetails'
         const fleetDivs = document.querySelectorAll('div.fleetDetails');
         
         if (fleetDivs.length === 0) {
@@ -353,10 +353,7 @@ extract_fleets_script = """
                 };
                 fleet.mission_name = missionMap[missionType] || `Misión ${missionType}`;
                 fleet.mission_type = missionType;
-                
-                // Detectar si es vuelo de regreso
-                fleet.return_flight = fleetDiv.getAttribute('data-return-flight') === 'true';
-                
+                                
                 // Origen - buscar en span.originCoords y span.originPlanet
                 const originCoords = fleetDiv.querySelector('span.originCoords a');
                 const originPlanet = fleetDiv.querySelector('span.originPlanet');
@@ -411,6 +408,9 @@ extract_fleets_script = """
                 }
                 fleet.ships_count = shipsCount;
                 
+                // Detectar si es vuelo de regreso
+                fleet.return_flight = fleetDiv.getAttribute('data-return-flight') === 'true';
+
                 // Hora de llegada
                 const arrivalTime = fleetDiv.getAttribute('data-arrival-time');
                 fleet.arrival_time = arrivalTime ? parseInt(arrivalTime) : 0;
@@ -418,6 +418,15 @@ extract_fleets_script = """
                 // Reloj de llegada (absTime)
                 const absTimeSpan = fleetDiv.querySelector('span.absTime');
                 fleet.arrival_clock = absTimeSpan ? absTimeSpan.textContent.trim() : '—';
+                
+                // Hora de regreso
+                const detail = fleetDiv.querySelector('a.openCloseDetails');
+                const returnTime = detail.getAttribute('data-end-time');
+                fleet.return_time = returnTime ? parseInt(returnTime) : 0;
+                
+                // Reloj de regreso (nextabsTime)
+                const nextabsTimeSpan = fleetDiv.querySelector('span.nextabsTime');
+                fleet.return_clock = nextabsTimeSpan ? nextabsTimeSpan.textContent.trim() : '—';
                 
                 result.fleets.push(fleet);
                 console.log("[OGameDebug] Flota extraída:", fleet);
