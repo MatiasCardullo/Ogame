@@ -440,3 +440,25 @@ extract_fleets_script = """
         return result;
     })();
 """
+auction_listener = """
+(function() {
+    console.log("INJECTED EARLY");
+
+    const open = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {
+        this._url = url;
+        return open.apply(this, arguments);
+    };
+
+    const send = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
+        this.addEventListener("load", function() {
+            if (this._url && this._url.includes("traderauctioneer")) {
+                console.log("[AUCTIONEER]", this.responseText);
+            }
+        });
+        return send.apply(this, arguments);
+    };
+})();
+"""
+

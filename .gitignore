@@ -3,3 +3,4 @@
 *.html
 *.json
 /test
+/socket-server/node_modules

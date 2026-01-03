@@ -1,19 +1,21 @@
+from re import S
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QFileDialog, QLabel, QTextEdit, QPushButton, QSystemTrayIcon, QComboBox
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEngineProfile
+from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineScript
 from PyQt6.QtCore import QUrl, QTimer
 from PyQt6.QtGui import QIcon
 from custom_page import CustomWebPage
 from debris_tab import create_debris_tab
 from fleet_tab import _refresh_scheduled_fleets_list, auto_send_scheduled_fleets, create_fleets_tab, save_scheduled_fleets, update_fleet_origin_combo
 from panel import refresh_resources_panel, update_planet_data
+from socket_tab import create_socket_tab
 from sprite_widget import SpriteWidget
 import time, os, json
 from js_scripts import (
-    in_game, extract_meta_script, extract_resources_script,
+    in_game, extract_meta_script, extract_resources_script, auction_listener,
     extract_queue_functions, extract_planet_array, extract_fleets_script
 )
 
@@ -42,7 +44,6 @@ class MainWindow(QMainWindow):
         self.browser_tab = QWidget()
         self.browser_box = QHBoxLayout()
         self.base_url = "https://s163-ar.ogame.gameforge.com/game/index.php"
-
         # Login
         self.login = self.web_engine(profile, url)
         if not logged :
@@ -100,6 +101,15 @@ class MainWindow(QMainWindow):
             # Conectar extracción de flotas si es la página de Flotas (index 1)
             if i == 1:
                 web.loadFinished.connect(lambda: self.on_fleets_page_loaded())
+            # Conectar extracción de subasta
+            if i == 3:
+                script = QWebEngineScript()
+                script.setName("auctioneer_hook")
+                script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+                script.setRunsOnSubFrames(True)
+                script.setSourceCode(auction_listener)
+                self.profile.scripts().insert(script)
+
             
             # Monitorear cambios de URL para detectar desconexión
             web.urlChanged.connect(lambda url, page_idx=i: self.check_disconnection(url, page_idx))
@@ -120,7 +130,7 @@ class MainWindow(QMainWindow):
 
         # Navbar uses wrapper actions so it always targets the active `self.main_web`
         self.navbar = QHBoxLayout()
-        for text, action in [("🏠", "home"), ("<", "back"), (">", "forward"), ("↻", "reload"), ("💾", "save")]:
+        for text, action in [("💾", "save"), ("🏠", "home"), ("<", "back"), (">", "forward"), ("↻", "reload")]:
             btn = QPushButton(text)
             btn.setBaseSize(20, 20)
             if action == "save":
@@ -228,6 +238,10 @@ class MainWindow(QMainWindow):
 
         self.main_panel.setLayout(main_layout)
         self.tabs.addTab(self.main_panel, "📊 Panel Principal")
+
+        # ----- Tab Comunicaciones -----
+        comunication_tab = create_socket_tab("https://TU-DOMINIO-O-NGROK:3000")
+        self.tabs.addTab(comunication_tab, "Socket Control")
 
         self.setCentralWidget(self.tabs)
 
@@ -384,7 +398,7 @@ class MainWindow(QMainWindow):
             print(f'[DEBUG] reload_default_urls error: {e}')
 
     def reload_other_pages_urls(self):
-        """Recarga las URLs preestablecidas de todas las páginas excepto Main (index 0)."""
+        """Recarga las URLs preestablecidas de todas las páginas excepto Main (index 0), solo si están en una URL diferente."""
         try:
             if not hasattr(self, 'pages_views'):
                 return
@@ -397,8 +411,13 @@ class MainWindow(QMainWindow):
                 
                 url = page_info['url']
                 web = page_info['web']
-                print(f"[DEBUG] Cargando página {i}: {url}")
-                web.load(QUrl(url))
+                current_url = web.url().toString()
+                # Solo recargar si la URL actual es diferente a la preestablecida
+                if current_url != url:
+                    print(f"[DEBUG] Cargando página {i}: {url}")
+                    web.load(QUrl(url))
+                else:
+                    print(f"[DEBUG] Página {i} ya está en la URL correcta, omitiendo recarga")
         except Exception as e:
             print(f'[DEBUG] reload_other_pages_urls error: {e}')
 
@@ -943,8 +962,8 @@ class MainWindow(QMainWindow):
             self.fleets_data = data.get("fleets", [])
             self.fleet_slots = data.get("fleetSlots", {"current": 0, "max": 0})
             self.exp_slots = data.get("expSlots", {"current": 0, "max": 0})
-            print(f"[FLEETS] ✅ Cargadas {len(self.fleets_data)} flotas desde pages_views[1]")
-            print(f"[FLEETS] Slots - Flotas: {self.fleet_slots['current']}/{self.fleet_slots['max']}, Expediciones: {self.exp_slots['current']}/{self.exp_slots['max']}")
+            #print(f"[FLEETS] ✅ Cargadas {len(self.fleets_data)} flotas desde pages_views[1]")
+            #print(f"[FLEETS] Slots - Flotas: {self.fleet_slots['current']}/{self.fleet_slots['max']}, Expediciones: {self.exp_slots['current']}/{self.exp_slots['max']}")
             # Actualizar timestamp
             self.last_fleet_update = time.time()
             try:
