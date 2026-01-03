@@ -64,7 +64,6 @@ def scrap_tech_tree(profile):#self.page.profile()
         
         # Nueva conexión
         def on_loaded():
-            from PyQt6.QtCore import QTimer
             QTimer.singleShot(300, extract_info)
         
         def extract_info():

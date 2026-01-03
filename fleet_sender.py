@@ -2,11 +2,9 @@
 Módulo para enviar flotas en OGame con validaciones y manejo de errores
 Estrategia de token AJAX: Se obtiene de cualquier endpoint API exitoso
 """
-import requests
-import time
-import json
+import requests, time, json, re, traceback
 from datetime import datetime
-from worker import load_ogame_session
+from galaxy_worker import load_ogame_session
 from typing import Optional
 
 # Cache global para el token AJAX
@@ -70,7 +68,6 @@ def get_ajax_token(session) -> Optional[str]:
             pass
         
         # Si la respuesta es HTML, buscar el token con regex
-        import re
         token_match = re.search(r'"newAjaxToken"\s*:\s*"([a-f0-9]{32})"', response.text)
         if token_match:
             token = token_match.group(1)
@@ -256,7 +253,6 @@ def send_fleet(fleet_data, profile_path="profile_data"):
         return False, f"Cookies no encontradas en {profile_path}"
     except Exception as e:
         print(f"❌ Error: {str(e)}")
-        import traceback
         traceback.print_exc()
         return False, f"Error: {str(e)}"
 
@@ -277,9 +273,9 @@ def send_scheduled_fleets(scheduled_fleets, profile_path="profile_data", fleet_s
     available_fleet_slots = fleet_slots.get("max", 0) - fleet_slots.get("current", 0)
     available_exp_slots = exp_slots.get("max", 0) - exp_slots.get("current", 0)
     
-    print(f"\n[FLEET-SENDER] Slots disponibles:")
-    print(f"  - Flotas: {available_fleet_slots}/{fleet_slots.get('max', 0)}")
-    print(f"  - Expediciones: {available_exp_slots}/{exp_slots.get('max', 0)}")
+    #print(f"\n[FLEET-SENDER] Slots disponibles:")
+    #print(f"  - Flotas: {available_fleet_slots}/{fleet_slots.get('max', 0)}")
+    #print(f"  - Expediciones: {available_exp_slots}/{exp_slots.get('max', 0)}")
 
     for fleet in scheduled_fleets:
         # Saltar si ya fue completada

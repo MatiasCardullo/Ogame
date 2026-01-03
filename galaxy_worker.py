@@ -146,10 +146,8 @@ class GalaxyWorker:
                         print(f"G:{g} S:{s} - Error tras {max_retries} reintentos: {e}")
             
             print(f"G:{g} S:{s}")
-            if parsed:
-                data[str(g)][str(s)] = parsed
-                time.sleep(0.5)
-            time.sleep(0.1)
+            data[str(g)][str(s)] = parsed
+            time.sleep(0.5)
         # Guardar en archivo específico para esta galaxia
         output_file = f"galaxy_data_g{g}.json"
         with open(output_file, "w", encoding="utf-8") as f:
@@ -175,5 +173,3 @@ if __name__ == "__main__":
         print(f"[GalaxyWorker] Error en galaxia: {e}")
         traceback.print_exc()
         sys.exit(1)
-    
-    input("\nPresiona Enter para cerrar esta consola...")

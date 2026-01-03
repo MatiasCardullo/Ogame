@@ -1,10 +1,11 @@
-import json, os, time
+import json, os, time, traceback, threading, subprocess, sys
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
     QSpinBox, QGroupBox, QFormLayout, 
     QTableWidget, QTableWidgetItem
 )
 from PyQt6.QtCore import Qt
+from fleet_tab import _refresh_scheduled_fleets_list, save_scheduled_fleets
 from text import cantidad
 
 def create_debris_tab(self):
@@ -24,7 +25,7 @@ def create_debris_tab(self):
     # Botones de carga
     load_buttons_layout = QHBoxLayout()
     
-    load_all_btn = QPushButton("📂 Cargar Todas las Galaxias")
+    load_all_btn = QPushButton("📂 Escanear Todas las Galaxias")
     load_all_btn.setStyleSheet("""
         QPushButton {
             background-color: #0a3a6a;
@@ -41,7 +42,7 @@ def create_debris_tab(self):
     load_all_btn.clicked.connect(lambda: run_galaxy_worker_and_refresh(self, galaxy_only=None))
     load_buttons_layout.addWidget(load_all_btn)
     
-    self.load_single_galaxy_btn = QPushButton("🌍 Recargar Galaxia Seleccionada")
+    self.load_single_galaxy_btn = QPushButton("🌍 Escanear Galaxia Seleccionada")
     self.load_single_galaxy_btn.setStyleSheet("""
         QPushButton {
             background-color: #3a5a0a;
@@ -60,6 +61,44 @@ def create_debris_tab(self):
     
     load_buttons_layout.addStretch()
     debris_layout.addLayout(load_buttons_layout)
+    
+    # Botones para cargar desde JSONs (sin GalaxyWorker)
+    json_buttons_layout = QHBoxLayout()
+    
+    load_all_json_btn = QPushButton("📄 Cargar desde JSONs (Todas)")
+    load_all_json_btn.setStyleSheet("""
+        QPushButton {
+            background-color: #3a3a0a;
+            color: #ff0;
+            border: 1px solid #ff0;
+            padding: 6px;
+            border-radius: 4px;
+        }
+        QPushButton:hover {
+            background-color: #5a5a0f;
+        }
+    """)
+    load_all_json_btn.clicked.connect(lambda: load_debris_data(self))
+    json_buttons_layout.addWidget(load_all_json_btn)
+    
+    self.load_single_json_btn = QPushButton("📄 Recargar desde JSON")
+    self.load_single_json_btn.setStyleSheet("""
+        QPushButton {
+            background-color: #2a3a0a;
+            color: #ff0;
+            border: 1px solid #ff0;
+            padding: 6px;
+            border-radius: 4px;
+        }
+        QPushButton:hover {
+            background-color: #4a5a0f;
+        }
+    """)
+    self.load_single_json_btn.clicked.connect(lambda: load_debris_data(self))
+    json_buttons_layout.addWidget(self.load_single_json_btn)
+    
+    json_buttons_layout.addStretch()
+    debris_layout.addLayout(json_buttons_layout)
     
     # Tabla de debris
     self.debris_table = QTableWidget()
@@ -220,56 +259,55 @@ def load_debris_data(self):
     except Exception as e:
         self._notif_label.setText(f"❌ Error cargando debris: {str(e)}")
         print(f"❌ Error: {e}")
-        import traceback
         traceback.print_exc()
 
 def run_galaxy_worker_and_refresh(self, galaxy_only=None):
-    """Ejecuta GalaxyWorker para obtener datos de galaxia y luego actualiza la lista de debris
+    """Ejecuta galaxy_worker.py en una consola separada para obtener datos de galaxia
     
     Args:
         galaxy_only: Si es None, escanea todas las galaxias (1-5). Si es un número, escanea solo esa galaxia.
     """
     try:
-        self._notif_label.setText("🔄 Explorando galaxias...")
+        self._notif_label.setText("🔄 Abriendo consola para explorar galaxias...")        
         
-        # Importar GalaxyWorker desde worker.py
-        from worker import GalaxyWorker
-        
-        # Ejecutar GalaxyWorker para cada galaxia en background usando thread
-        def run_galaxy_workers():
+        def run_galaxy_workers_subprocess():
             try:
                 galaxies_to_scan = [galaxy_only] if galaxy_only else range(1, 6)
+                
                 for galaxy_num in galaxies_to_scan:
                     try:
-                        worker = GalaxyWorker(galaxy_num)
-                        worker.run()
-                        print(f"[GalaxyWorker] Galaxia {galaxy_num} completada")
+                        # Ejecutar galaxy_worker.py con argumento del número de galaxia
+                        if sys.platform == "win32":
+                            subprocess.Popen(
+                                [sys.executable, "galaxy_worker.py", str(galaxy_num)],
+                                creationflags=subprocess.CREATE_NEW_CONSOLE
+                            )
+                        else:
+                            # Para otros sistemas operativos
+                            subprocess.Popen([sys.executable, "galaxy_worker.py", str(galaxy_num)])
+                        
+                        print(f"[DEBUG] Galaxia {galaxy_num} lanzada en consola separada")
+                        
                     except Exception as e:
+                        self._notif_label.setText(f"❌ Error lanzando galaxia {galaxy_num}: {str(e)}")
                         print(f"[GalaxyWorker] Error en galaxia {galaxy_num}: {e}")
-                        import traceback
                         traceback.print_exc()
                 
-                # Después de completar todos, cargar los datos
-                print("[GalaxyWorker] Todos los procesos completados, cargando datos...")
-                load_debris_data(self)
-                self._notif_label.setText("✅ Datos de galaxias cargados")
+                self._notif_label.setText("✅ Procesos GalaxyWorker lanzados en consolas separadas")
+                print("[GalaxyWorker] Todos los procesos han sido lanzados")
                 
             except Exception as e:
-                self._notif_label.setText(f"❌ Error en GalaxyWorker: {str(e)}")
+                self._notif_label.setText(f"❌ Error ejecutando GalaxyWorker: {str(e)}")
                 print(f"❌ Error: {e}")
-                import traceback
                 traceback.print_exc()
         
         # Ejecutar en thread para no bloquear UI
-        import threading
-        thread = threading.Thread(target=run_galaxy_workers, daemon=True)
+        thread = threading.Thread(target=run_galaxy_workers_subprocess, daemon=True)
         thread.start()
-        self._notif_label.setText("⏳ Escaneando galaxias...")
         
     except Exception as e:
         self._notif_label.setText(f"❌ Error ejecutando GalaxyWorker: {str(e)}")
         print(f"❌ Error: {e}")
-        import traceback
         traceback.print_exc()
 
 def load_selected_galaxy(self):
@@ -398,8 +436,8 @@ def schedule_recycling_missions(self):
         missions_created += 1
     
     if missions_created > 0:
-        self._refresh_scheduled_fleets_list()
-        self.save_scheduled_fleets()
+        _refresh_scheduled_fleets_list(self)
+        save_scheduled_fleets(self.scheduled_fleets)
         self._notif_label.setText(f"✅ {missions_created} misiones de reciclaje programadas")
     
     # Limpiar selección

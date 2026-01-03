@@ -38,7 +38,7 @@ def time_str(t, not_seconds = False):
         if d > 0: parts.append(f"{d}d")
         if h > 0: parts.append(f"{h}h")
         if m > 0: parts.append(f"{m}m")
-        elif len(parts) == 0: parts.append("<1m")
+        elif len(parts) == 0: parts.append(f"<1m")
         time = " ".join(parts)
     else:
         if h > 0:
@@ -87,13 +87,13 @@ def format_queue_entry(entry, now, not_seconds):
     barra = barra_html(progress, 100, color)
     time = time_str(remaining, not_seconds)
     aux = f"{name} [{int(progress)}%] ({time})"
-    if len(aux) > 39:
+    if len(aux) > 35:
         return f"{name}<br>[{int(progress)}%] ({time})<br>{barra}"
     else:
         return f"{aux}<br>{barra}"
 
 def format_research_queue_entry(entry, now, not_seconds):
-    """Formato amigable para mostrar una queue de Investigacion"""
+    """Formato amigable para mostrar una queue de Investigación"""
     name, remaining, progress = queue_entry(entry, now)
     color = progress_color(progress, 89)
     color = "#0f0" if progress < 89 else "#ff0" if progress < 95 else "#f00"

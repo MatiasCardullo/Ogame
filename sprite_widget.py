@@ -1,4 +1,4 @@
-import os
+import os, requests
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QPushButton, QLineEdit,
     QVBoxLayout, QGridLayout, QScrollArea
@@ -169,7 +169,6 @@ class SpriteWidget(QWidget):
         layout.addWidget(scroll)
 
     def load_image(self,local_path):
-        import requests
         sprites = requests.get("https://gf3.geo.gfsrv.net/cdn53/7a9861be0c38bf7de05a57c56d73cf.jpg").content
         with open(local_path, 'wb') as f:
             f.write(sprites)

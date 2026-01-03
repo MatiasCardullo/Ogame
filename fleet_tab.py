@@ -1,5 +1,4 @@
-import json
-import time
+import json, time
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox,
@@ -7,7 +6,6 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QDateTimeEdit, QGridLayout
 )
 from PyQt6.QtCore import QDateTime, QThread, pyqtSignal, QObject
-
 from fleet_sender import send_scheduled_fleets
 
 class FleetSendWorker(QObject):
@@ -464,7 +462,8 @@ def _on_fleet_send_success(self, results):
 
 def _on_fleet_send_error(self, error_msg):
     """Callback cuando hay error en el envío de flotas"""
-    print(f"[AUTO-SEND] Error: {error_msg}")
+    if not error_msg == "No results from send_scheduled_fleets":
+        print(f"[AUTO-SEND] Error: {error_msg}")
 
 def on_fleet_selection_changed():
     """Se ejecuta cuando se selecciona un elemento de la lista de misiones"""
