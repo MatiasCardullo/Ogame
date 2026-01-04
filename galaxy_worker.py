@@ -1,4 +1,12 @@
+import os
 import time, json, requests, browser_cookie3, sys, traceback
+
+def close():
+    print("\nCerrando en ", end='', flush=True)
+    for i in range(100, 0, -1):
+        print(i, end="   ", flush=True)
+        time.sleep(1)
+    sys.exit(1)
 
 def load_ogame_session(profile_path):
     cj = browser_cookie3.chrome(
@@ -16,11 +24,44 @@ def load_ogame_session(profile_path):
     })
     return session
 
+def ensure_logged_in(profile_name, galaxy=None, retry_wait=10):
+    BASE_URL = "https://s163-ar.ogame.gameforge.com/game/index.php"
+    while True:
+        session = load_ogame_session(profile_name)
+        try:
+            r = session.get(f"{BASE_URL}?page=ingame&component=galaxy", timeout=10)
+            if "component=galaxy" in r.text:
+                if galaxy is not None:
+                    print(f"\r[GALAXY {galaxy}] Logged          ")
+                return session
+        except Exception as e:
+            print(f"\n[LOGIN] Error: {e}")
+
+        if galaxy is not None:
+            print(f"\r[GALAXY {galaxy}] Login...", end='', flush=True)
+        time.sleep(retry_wait)
+
+def parse_systems_arg(arg):
+    # Caso: número único
+    if arg.isdigit():
+        s = int(arg)
+        return range(s, s + 1)
+
+    # Caso: rango A-B
+    if "-" in arg:
+        start, end = arg.split("-", 1)
+        if start.isdigit() and end.isdigit():
+            start, end = int(start), int(end)
+            if start <= end:
+                return range(start, end + 1)
+
+    raise ValueError(f"Sistemas inválidos: '{arg}'")
+
 def parse_galaxy_response(text):
     text = text.strip()
 
     if not text.startswith("{"):
-        print("⚠ Non-JSON response (first 200 chars):")
+        print("⚠️ Non-JSON response (first 200 chars):")
         print(text[:200])
         return None, {}
 
@@ -78,9 +119,11 @@ def parse_galaxy_response(text):
     return token, parsed
 
 class GalaxyWorker:
-    def __init__(self, galaxy):
+    def __init__(self, galaxy, systems=None, full_scan=True):
         self.galaxy = galaxy
-        
+        self.systems = systems or range(1, 500)
+        self.full_scan = full_scan
+
     def run(self):
         BASE_URL = "https://s163-ar.ogame.gameforge.com/game/index.php"
         PARAMS = {
@@ -90,86 +133,118 @@ class GalaxyWorker:
             "ajax": "1",
             "asJson": "1"
         }
-        session = load_ogame_session("profile_data")
+
         data = {}
         token = None
-        logged = False
-        
-        # Esperar login
-        while not logged:
-            r = session.get(f"{BASE_URL}?page=ingame&component=galaxy")
-            if "component=galaxy" in r.text:
-                logged = True
-                print(f"[GALAXY {self.galaxy}] Logged")
-                break
-            time.sleep(10)
-            print(f"[GALAXY {self.galaxy}] Login...")
-            session = load_ogame_session("profile_data")
-        
-        # Iterar solo la galaxia especificada
+
+        # Login inicial
+        session = ensure_logged_in("profile_data", self.galaxy)
+
         g = self.galaxy
-        data[str(g)] = {}
-        for s in range(1, 500):
+        output_file = f"galaxy_data_g{g}.json"
+
+        if not self.full_scan and os.path.exists(output_file):
+            with open(output_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            print(f"[GALAXY {g}] Archivo existente cargado, mergeando datos")
+        else:
+            data = {}
+
+        data.setdefault(str(g), {})
+
+        for s in self.systems:
             payload = {"galaxy": g, "system": s}
             if token:
                 payload["token"] = token
-            
-            # Reintentos con backoff exponencial
-            max_retries = 3
+
+            max_retries = 5
             retry_count = 0
             parsed = None
-            
+
             while retry_count < max_retries and parsed is None:
                 try:
                     r = session.post(BASE_URL, params=PARAMS, data=payload, timeout=10)
                     token, parsed = parse_galaxy_response(r.text)
-                    
+
+                    if parsed == {}:
+                        print(f"\nG:{g} S:{s} - Respuesta vacía, relogueando...")
+                        session = ensure_logged_in("profile_data", self.galaxy)
+                        token = None
+                        retry_count += 1
+                        continue
+
                     if parsed is None:
                         retry_count += 1
                         if retry_count < max_retries:
-                            wait_time = 2 ** retry_count  # Backoff: 2, 4, 8 segundos
-                            print(f"G:{g} S:{s} - Respuesta inválida, reintentando en {wait_time}s ({retry_count}/{max_retries})")
+                            wait_time = 2 ** retry_count
+                            print(
+                                f"\rG:{g} S:{s} - Respuesta inválida, "
+                                f"reintentando en {wait_time}s ({retry_count}/{max_retries})  ",
+                                end='', flush=True
+                            )
                             time.sleep(wait_time)
                         else:
-                            print(f"G:{g} S:{s} - Error tras {max_retries} reintentos")
+                            print(f"\nG:{g} S:{s} - Error tras {max_retries} reintentos")
                     else:
                         if retry_count > 0:
-                            print(f"G:{g} S:{s} - Conexión exitosa tras {retry_count} reintento(s)")
+                            print(f"G:{g} S:{s} - OK tras {retry_count} reintento(s)")
                         break
+
                 except Exception as e:
                     retry_count += 1
                     if retry_count < max_retries:
                         wait_time = 2 ** retry_count
-                        print(f"G:{g} S:{s} - Error de conexión: {e}, reintentando en {wait_time}s ({retry_count}/{max_retries})")
+                        print(
+                            f"\rG:{g} S:{s} - Error conexión: {e}, "
+                            f"reintentando en {wait_time}s ({retry_count}/{max_retries})",
+                            end='', flush=True
+                        )
                         time.sleep(wait_time)
                     else:
-                        print(f"G:{g} S:{s} - Error tras {max_retries} reintentos: {e}")
-            
-            print(f"G:{g} S:{s}")
+                        print(f"\nG:{g} S:{s} - Error tras {max_retries} reintentos: {e}")
+
             data[str(g)][str(s)] = parsed
-            time.sleep(0.5)
-        # Guardar en archivo específico para esta galaxia
+
+            if parsed and len(parsed) > 1:
+                time.sleep(0.35)
+            time.sleep(0.25)
+
+            print(f"\rG:{g} S:{s}", end='', flush=True)
+
         output_file = f"galaxy_data_g{g}.json"
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
-        print(f"[GALAXY {self.galaxy}] Guardado en {output_file}")
+
+        print(f"\n[GALAXY {self.galaxy}] Guardado en {output_file}")
 
 if __name__ == "__main__":
-    
+    full_scan = len(sys.argv) < 3
+
     if len(sys.argv) < 2:
-        print("Uso: python galaxy_worker.py <numero_galaxia>")
+        print("Uso:")
+        print("  python galaxy_worker.py <galaxia>")
+        print("  python galaxy_worker.py <galaxia> <sistema>")
+        print("  python galaxy_worker.py <galaxia> <inicio-fin>")
         sys.exit(1)
-    
+
     try:
         galaxy_num = int(sys.argv[1])
-        print(f"[GalaxyWorker] Iniciando escaneo de galaxia {galaxy_num}")
-        worker = GalaxyWorker(galaxy_num)
+        if not (1 <= galaxy_num <= 5):
+            raise ValueError("La galaxia debe estar entre 1 y 5")
+        if full_scan:
+            systems = None
+            print(f"[GalaxyWorker] Galaxia {galaxy_num} | Sistemas 1-499")
+        else:
+            systems = parse_systems_arg(sys.argv[2])
+            print(f"[GalaxyWorker] Galaxia {galaxy_num} | Sistemas {systems.start}-{systems.stop - 1}")
+        worker = GalaxyWorker(galaxy_num, systems, full_scan)
         worker.run()
         print(f"[GalaxyWorker] Galaxia {galaxy_num} completada")
-    except ValueError:
-        print(f"Error: '{sys.argv[1]}' no es un número válido")
-        sys.exit(1)
+        close()
+    except ValueError as e:
+        print(f"Error: {e}")
+        close()
     except Exception as e:
         print(f"[GalaxyWorker] Error en galaxia: {e}")
         traceback.print_exc()
-        sys.exit(1)
+        close()

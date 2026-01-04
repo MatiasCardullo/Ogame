@@ -42,15 +42,25 @@ class FleetSendWorker(QObject):
 
 def create_fleets_tab(self):
     fleets_tab = QWidget()
+    tab_layout = QVBoxLayout()
     fleets_layout = QHBoxLayout()
+
+    # Título
+    title = QLabel("⏳ Programador de Misiones [WIP]")
+    title_font = title.font()
+    title_font.setBold(True)
+    title_font.setPointSize(11)
+    title.setFont(title_font)
+    tab_layout.addWidget(title)
 
     # Programador de naves
     scheduler = create_fleet_scheduler_panel(self)
     fleets_layout.addWidget(scheduler)
     history = create_panel(self)
     fleets_layout.addWidget(history)
-    
-    fleets_tab.setLayout(fleets_layout)
+
+    tab_layout.addLayout(fleets_layout)
+    fleets_tab.setLayout(tab_layout)
     return fleets_tab
 
 def create_fleet_scheduler_panel(self):
@@ -58,15 +68,7 @@ def create_fleet_scheduler_panel(self):
     scheduler_widget = QWidget()
     scheduler_layout = QVBoxLayout()
     scheduler_layout.setContentsMargins(5, 5, 5, 5)
-    
-    # Título
-    title = QLabel("⏳ Programador de Misiones [WIP]")
-    title_font = title.font()
-    title_font.setBold(True)
-    title_font.setPointSize(11)
-    title.setFont(title_font)
-    scheduler_layout.addWidget(title)
-    
+        
     # Grupo: Configuración de misión
     mission_group = QGroupBox("🎯 Configuración de Misión")
     mission_form = QFormLayout()

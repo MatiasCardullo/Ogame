@@ -23,10 +23,7 @@ def create_debris_tab(self):
     debris_layout.addWidget(title)
     
     # Botones de carga
-    load_buttons_layout = QHBoxLayout()
-    
-    load_all_btn = QPushButton("📂 Escanear Todas las Galaxias")
-    load_all_btn.setStyleSheet("""
+    style_button="""
         QPushButton {
             background-color: #0a3a6a;
             color: #0ff;
@@ -38,67 +35,34 @@ def create_debris_tab(self):
         QPushButton:hover {
             background-color: #0a5a9a;
         }
-    """)
+    """
+
+    load_buttons_layout = QHBoxLayout()
+    load_all_btn = QPushButton("📂 Escanear Todas las Galaxias")
+    load_all_btn.setStyleSheet(style_button)
     load_all_btn.clicked.connect(lambda: run_galaxy_worker_and_refresh(self, galaxy_only=None))
     load_buttons_layout.addWidget(load_all_btn)
     
-    self.load_single_galaxy_btn = QPushButton("🌍 Escanear Galaxia Seleccionada")
-    self.load_single_galaxy_btn.setStyleSheet("""
-        QPushButton {
-            background-color: #3a5a0a;
-            color: #ff0;
-            border: 1px solid #ff0;
-            padding: 6px;
-            border-radius: 4px;
-            font-weight: bold;
-        }
-        QPushButton:hover {
-            background-color: #5a7a0f;
-        }
-    """)
-    self.load_single_galaxy_btn.clicked.connect(lambda: load_selected_galaxy(self))
-    load_buttons_layout.addWidget(self.load_single_galaxy_btn)
+    load_single_galaxy_btn = QPushButton("🌍 Escanear Galaxia Seleccionada")
+    load_single_galaxy_btn.setStyleSheet(style_button)
+    load_single_galaxy_btn.clicked.connect(lambda: load_selected_galaxy(self))
+    load_buttons_layout.addWidget(load_single_galaxy_btn)
     
     load_buttons_layout.addStretch()
     debris_layout.addLayout(load_buttons_layout)
     
-    # Botones para cargar desde JSONs (sin GalaxyWorker)
-    json_buttons_layout = QHBoxLayout()
-    
     load_all_json_btn = QPushButton("📄 Cargar desde JSONs (Todas)")
-    load_all_json_btn.setStyleSheet("""
-        QPushButton {
-            background-color: #3a3a0a;
-            color: #ff0;
-            border: 1px solid #ff0;
-            padding: 6px;
-            border-radius: 4px;
-        }
-        QPushButton:hover {
-            background-color: #5a5a0f;
-        }
-    """)
+    load_all_json_btn.setStyleSheet(style_button)
     load_all_json_btn.clicked.connect(lambda: load_debris_data(self))
-    json_buttons_layout.addWidget(load_all_json_btn)
+    load_buttons_layout.addWidget(load_all_json_btn)
     
-    self.load_single_json_btn = QPushButton("📄 Recargar desde JSON")
-    self.load_single_json_btn.setStyleSheet("""
-        QPushButton {
-            background-color: #2a3a0a;
-            color: #ff0;
-            border: 1px solid #ff0;
-            padding: 6px;
-            border-radius: 4px;
-        }
-        QPushButton:hover {
-            background-color: #4a5a0f;
-        }
-    """)
-    self.load_single_json_btn.clicked.connect(lambda: load_debris_data(self))
-    json_buttons_layout.addWidget(self.load_single_json_btn)
+    load_single_json_btn = QPushButton("📄 Recargar desde JSON")
+    load_single_json_btn.setStyleSheet(style_button)
+    load_single_json_btn.clicked.connect(lambda: load_debris_data(self))
+    load_buttons_layout.addWidget(load_single_json_btn)
     
-    json_buttons_layout.addStretch()
-    debris_layout.addLayout(json_buttons_layout)
+    load_buttons_layout.addStretch()
+    debris_layout.addLayout(load_buttons_layout)
     
     # Tabla de debris
     self.debris_table = QTableWidget()

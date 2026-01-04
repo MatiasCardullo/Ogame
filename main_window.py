@@ -1,4 +1,3 @@
-from re import S
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QFileDialog, QLabel, QTextEdit, QPushButton, QSystemTrayIcon, QComboBox
@@ -7,17 +6,16 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineScript
 from PyQt6.QtCore import QUrl, QTimer
 from PyQt6.QtGui import QIcon
-import scipy as sp
 from custom_page import CustomWebPage
 from debris_tab import create_debris_tab
 from fleet_tab import _refresh_scheduled_fleets_list, auto_send_scheduled_fleets, create_fleets_tab, save_scheduled_fleets, update_fleet_origin_combo
-from panel import refresh_resources_panel, update_planet_data
+from panel import handle_main_web_resources, refresh_resources_panel
 from socket_tab import create_socket_tab
 from sprite_widget import SpriteWidget
 import time, os, json
 from js_scripts import (
     in_game, extract_meta_script, extract_resources_script, auction_listener,
-    extract_queue_functions, extract_planet_array, extract_fleets_script
+    extract_planet_array, extract_fleets_script
 )
 
 logged = True
@@ -554,209 +552,7 @@ class MainWindow(QMainWindow):
         self.current_main_web_planet_id = planet_id
 
         # Extraer recursos
-        self.main_web.page().runJavaScript(extract_resources_script, self.handle_main_web_resources)
-
-    def get_queues_for_component(self, component):
-        """Devuelve la lista de queues a extraer basándose en el component de la URL.
-        
-        Mapeo:
-        - overview: buildings, lfbuildings, research, lfresearch, ships
-        - supplies: buildings, ships
-        - facilities: buildings
-        - lfbuildings: lfbuildings, lfresearch
-        - lfresearch: lfbuildings, lfresearch
-        - research: research
-        - shipyard: ships
-        - defenses: ships
-        """
-        component_map = {
-            'overview': ['building', 'lf_building', 'research', 'lf_research', 'shipyard'],
-            'supplies': ['building', 'shipyard'],
-            'facilities': ['building'],
-            'lfbuildings': ['lf_building', 'lf_research'],
-            'lfresearch': ['lf_building', 'lf_research'],
-            'research': ['research'],
-            'shipyard': ['shipyard'],
-            'defenses': ['shipyard']
-        }
-        
-        return component_map.get(component, [])
-
-    def handle_main_web_resources(self, data):
-        """Maneja recursos del planeta en main_web."""
-        if not data:
-            return
-        
-        resources = {
-            "metal": data.get("metal", 0),
-            "crystal": data.get("crystal", 0),
-            "deuterium": data.get("deuterium", 0),
-            "energy": data.get("energy", 0),
-            "prod_metal": data.get("prod_metal", 0),
-            "prod_crystal": data.get("prod_crystal", 0),
-            "prod_deuterium": data.get("prod_deuterium", 0),
-            "cap_metal": data.get("capacity_metal", 0),
-            "cap_crystal": data.get("capacity_crystal", 0),
-            "cap_deuterium": data.get("capacity_deuterium", 0),
-            "last_update": time.time()
-        }
-        
-        # Extraer component de la URL de main_web
-        current_url = self.main_web.url().toString()
-        component = 'overview'  # default
-        
-        if '&component=' in current_url:
-            try:
-                component_part = current_url.split('&component=')[1].split('&')[0]
-                component = component_part
-            except Exception:
-                pass
-        
-        # Obtener las queues que deben existir en esta página
-        queues_to_extract = self.get_queues_for_component(component)
-        
-        if not queues_to_extract:
-            # No hay queues en esta página, solo actualizar recursos sin tocar las queues
-            # Obtener las queues actuales del memory para mantenerlas
-            planet_name = getattr(self, 'current_main_web_planet', 'Unknown')
-            coords = getattr(self, 'current_main_web_coords', '0:0:0')
-            now = int(time.time())
-            
-            queues_list = [
-                q for q in self.main_web_queue_memory.values()
-                if (q.get("planet_name") == planet_name and q.get("coords") == coords) or 
-                   q.get("planet_name") == "GLOBAL"
-            ]
-            queues_list.sort(key=lambda q: q.get("end", now))
-            
-            is_moon = getattr(self, 'current_main_web_is_moon', False)
-            parent_planet_key = getattr(self, 'current_planet_parent_key', None)
-            
-            update_planet_data(self,
-                planet_name=planet_name,
-                coords=coords,
-                resources=resources,
-                queues=queues_list,
-                is_moon=is_moon,
-                parent_planet_key=parent_planet_key
-            )
-            return
-        
-        # Construir script dinámico basándose en las queues esperadas
-        parts = []
-        present_js_dict = {}
-        
-        for queue_type in queues_to_extract:
-            if queue_type == 'building':
-                parts.append("extract_building()")
-                present_js_dict['building'] = True
-            elif queue_type == 'research':
-                parts.append("extract_research()")
-                present_js_dict['research'] = True
-            elif queue_type == 'lf_building':
-                parts.append("extract_lf_building()")
-                present_js_dict['lf_building'] = True
-            elif queue_type == 'lf_research':
-                parts.append("extract_lf_research()")
-                present_js_dict['lf_research'] = True
-            elif queue_type == 'shipyard':
-                parts.append("extract_shipyard()")
-                present_js_dict['shipyard'] = True
-        
-        if not parts:
-            update_planet_data(self,
-                planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
-                coords=getattr(self, 'current_main_web_coords', '0:0:0'),
-                resources=resources,
-                queues=[]
-            )
-            return
-        
-        # Construir el objeto present basándose en lo que debería haber
-        present_js = (
-            f"""let present = {{
-                building: {str(present_js_dict.get('building', False)).lower()},
-                research: {str(present_js_dict.get('research', False)).lower()},
-                lf_building: {str(present_js_dict.get('lf_building', False)).lower()},
-                lf_research: {str(present_js_dict.get('lf_research', False)).lower()},
-                shipyard: {str(present_js_dict.get('shipyard', False)).lower()}
-            }};"""
-        )
-        
-        dynamic_script = f"""
-            (function() {{
-                {present_js}
-                let final = [];
-                {extract_queue_functions}
-                return {{ present: present, queues: final.concat({",".join(parts)}) }};
-            }})();"""
-        
-        self.main_web.page().runJavaScript(dynamic_script, lambda queues_data: self.handle_main_web_queues(queues_data, resources))
-
-    def handle_main_web_queues(self, data, resources):
-        """Maneja colas del planeta en main_web."""
-        import hashlib
-        
-        now = int(time.time())
-        planet_name = getattr(self, 'current_main_web_planet', 'Unknown')
-        coords = getattr(self, 'current_main_web_coords', '0:0:0')
-        is_moon = getattr(self, 'current_main_web_is_moon', False)
-        parent_planet_key = getattr(self, 'current_planet_parent_key', None)
-        
-        # Procesar colas del DOM actual
-        if data and isinstance(data, dict):
-            queues_data = data.get('queues', []) or []
-            
-            for q in queues_data:
-                label = q.get("label", "")
-                name = q.get("name", "")
-                level = q.get("level", "")
-                start = int(q.get("start", now))
-                end = int(q.get("end", now))
-                
-                is_research = (
-                    "investig" in label.lower() or "research" in label.lower() or "🧬" in label
-                )
-                
-                if is_research:
-                    key_raw = f"{label}|{name}|GLOBAL|{start}|{end}"
-                    planet_for_store = 'GLOBAL'
-                    coords_for_store = 'GLOBAL'
-                else:
-                    key_raw = f"{label}|{name}|{planet_name}|{coords}|{start}|{end}"
-                    planet_for_store = planet_name
-                    coords_for_store = coords
-                
-                qid = hashlib.sha1(key_raw.encode("utf-8")).hexdigest()
-                
-                # Guardar en memory
-                self.main_web_queue_memory[qid] = {
-                    "id": qid,
-                    "label": label,
-                    "name": name,
-                    "level": level,
-                    "start": start,
-                    "end": end,
-                    "planet_name": planet_for_store,
-                    "coords": coords_for_store
-                }
-        
-        # Filtrar colas de memory para este planeta (incluyendo GLOBAL)
-        queues_list = [
-            q for q in self.main_web_queue_memory.values()
-            if (q.get("planet_name") == planet_name and q.get("coords") == coords) or 
-               q.get("planet_name") == "GLOBAL"
-        ]
-        queues_list.sort(key=lambda q: q.get("end", now))
-        
-        update_planet_data(self,
-            planet_name=planet_name,
-            coords=coords,
-            resources=resources,
-            queues=queues_list,
-            is_moon=is_moon,
-            parent_planet_key=parent_planet_key
-        )
+        self.main_web.page().runJavaScript(extract_resources_script, lambda data: handle_main_web_resources(self, data))
 
     def on_open(self):
         js = """
