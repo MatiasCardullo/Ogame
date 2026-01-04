@@ -1,11 +1,15 @@
-import json
+import json, sys
 import numpy as np
 import plotly.graph_objects as go
+from PyQt6.QtWidgets import QApplication, QMainWindow
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtCore import QUrl
+from pathlib import Path
 
 # ---------------------------
 # Configuración
 # ---------------------------
-STAR_LOCK = True
+STAR_LOCK = False
 MOON_LOCK = False
 NUM_G = "5"
 JSON_PATH = f"galaxy_data_g{NUM_G}.json"
@@ -79,6 +83,38 @@ def load_systems(path):
         systems.append(planets)
     return systems
 
+JS_CLICK = """
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    const plot = document.getElementById("galaxy_plot");
+
+    plot.on('plotly_click', function(data) {
+        const systemId = data.points[0].customdata;
+
+        const update = plot.data.map(trace => {
+            if (!trace.customdata) return trace.marker.opacity;
+
+            return trace.customdata.map(sid =>
+                sid === systemId ? 1.0 : 0.05
+            );
+        });
+
+        Plotly.restyle(plot, {
+            'marker.opacity': update
+        });
+    });
+});
+document.addEventListener("keydown", e => {
+    if (e.key === "Escape") {
+        Plotly.restyle(plot, {
+            'marker.opacity': 1.0
+        });
+    }
+});
+</script>
+"""
+
+
 # ---------------------------
 # Carga de datos
 # ---------------------------
@@ -101,7 +137,11 @@ for t in range(FRAMES):
     planet_hover = []
     moon_hover = []
     debris_hover = []
-
+    star_custom = []
+    planet_custom = []
+    moon_custom = []
+    debris_custom = []
+    star_color = []
 
     donut_offset = DONUT_SPEED * t
 
@@ -114,6 +154,8 @@ for t in range(FRAMES):
         x_stars.append(cx)
         y_stars.append(cy)
         star_hover.append(f"System: {i}")
+        star_color.append("yellow" if planets else "#505000")
+        star_custom.append(i)
 
         for p in planets:
             # 🪐 planeta
@@ -132,6 +174,8 @@ for t in range(FRAMES):
             planet_hover.append(
                 f"Planet: {p['name']}<br>Coords: {p['coords']}"
             )
+            planet_custom.append(i)
+
 
             # 🌙 luna
             if p.get("has_moon"):
@@ -149,6 +193,8 @@ for t in range(FRAMES):
                 moon_hover.append(
                     f"Moon: {p['name']}<br>Coords: {p['coords']}"
                 )
+                moon_custom.append(i)
+
 
             # ☄ debris del planeta
             if p.get("has_debris"):
@@ -164,15 +210,18 @@ for t in range(FRAMES):
 
                 x_debris.append(dx)
                 y_debris.append(dy)
+                debris_custom.append(i)
+
 
     frames.append(go.Frame(data=[
         go.Scatter(
             x=x_stars,
             y=y_stars,
             mode="markers",
-            marker=dict(size=STAR_SIZE, color="yellow"),
+            marker=dict(size=STAR_SIZE, color=star_color),
             hovertext=star_hover,
-            hoverinfo="text"
+            hoverinfo="text",
+            customdata=star_custom
         ),
         go.Scatter(
             x=x_planets,
@@ -180,7 +229,8 @@ for t in range(FRAMES):
             mode="markers",
             marker=dict(size=PLANET_SIZE, color="white"),
             hovertext=planet_hover,
-            hoverinfo="text"
+            hoverinfo="text",
+            customdata=planet_custom
         ),
         go.Scatter(
             x=x_moons,
@@ -188,13 +238,15 @@ for t in range(FRAMES):
             mode="markers",
             marker=dict(size=3, color="blue"),
             hovertext=moon_hover,
-            hoverinfo="text"
+            hoverinfo="text",
+            customdata=moon_custom
         ),
         go.Scatter(
             x=x_debris,
             y=y_debris,
             mode="markers",
-            marker=dict(size=3, color="red")
+            marker=dict(size=3, color="red"),
+            customdata=debris_custom
         )
     ]))
 
@@ -229,4 +281,31 @@ fig.update_layout(
     }]
 )
 
-fig.show()
+html = fig.to_html(
+    full_html=True,
+    include_plotlyjs="inline",
+    div_id="galaxy_plot"
+)
+
+html = html.replace("</body>", JS_CLICK + "</body>")
+
+with open("galaxy.html", "w", encoding="utf-8") as f:
+    f.write(html)
+
+class GalaxyViewer(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Galaxy Visualizer")
+        self.resize(900, 900)
+
+        view = QWebEngineView()
+        html_path = Path("galaxy.html").absolute()
+
+        view.load(QUrl.fromLocalFile(str(html_path)))
+        self.setCentralWidget(view)
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    win = GalaxyViewer()
+    win.show()
+    sys.exit(app.exec())
