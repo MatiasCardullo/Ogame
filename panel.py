@@ -1,8 +1,8 @@
 import time
 from fleet_tab import update_fleet_origin_combo
 from text import (
-    cantidad, progress_color, time_str,
-    planet_production_entry, format_queue_entry, format_research_queue_entry
+    cantidad, planet_production_entry,
+    format_queue_entry, format_research_queue_entry
 )
 
 
@@ -78,7 +78,7 @@ def refresh_resources_panel(self):
             end = int(entry.get("end", now))
             if end <= now:
                 continue
-            html += format_research_queue_entry(entry, now, self.current_update_interval > 1000) + "<br>"
+            html += format_research_queue_entry(entry, now, self.current_update_interval == 1000) + "<br>"
         html += "</div>"
 
     # ----- Tabla recursos + colas por planeta
@@ -174,14 +174,14 @@ def refresh_resources_panel(self):
             
             # Mostrar colas del planeta
             for idx, q in enumerate(planet_entries):
-                html += format_queue_entry(q, now, self.current_update_interval > 1000)
+                html += format_queue_entry(q, now, self.current_update_interval == 1000)
                 if idx < len(planet_entries) - 1 or moon_entries:
                     html += "<br>"
             
             # Mostrar colas de lunas
             for midx, (q, moon_name) in enumerate(moon_entries):
                 html += f"<div class='moon-section'>🌙 {moon_name}<br>"
-                html += format_queue_entry(q, now, self.current_update_interval > 1000)
+                html += format_queue_entry(q, now, self.current_update_interval == 1000)
                 html += "</div>"
                 if midx < len(moon_entries) - 1:
                     html += "<br>"
@@ -229,14 +229,6 @@ def update_planet_data(self, planet_name, coords, resources, queues, is_moon=Fal
         q_planet = q.get("planet_name", planet_name)
         q_coords = q.get("coords", coords)
 
-        # Para lunas, ignorar investigaciones (que son globales)
-        if is_moon:
-            label = q.get("label", "")
-            is_research = (
-                "investig" in label.lower() or "research" in label.lower() or "🧬" in label
-            )
-            if is_research:
-                continue  # Ignorar investigaciones en lunas
 
         entry = {
             "id": qid,

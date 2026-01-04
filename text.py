@@ -25,7 +25,7 @@ def tiempo_lleno(cant, cap, prod):
     except:
         return "—"
 
-def time_str(t, not_seconds = False):
+def time_str(t, seconds = True):
     d, r = divmod(t, 86400)
     h, r = divmod(r, 3600)
     m, s = divmod(r, 60)
@@ -33,20 +33,25 @@ def time_str(t, not_seconds = False):
     h = int(h)
     m = int(m)
     s = int(s)
-    if d > 0 or not_seconds:
-        parts = []
-        if d > 0: parts.append(f"{d}d")
+    time = None
+    if d > 0:
+        parts = [f"{d}d"]
         if h > 0: parts.append(f"{h}h")
         if m > 0: parts.append(f"{m}m")
-        elif len(parts) == 0: parts.append(f"<1m")
         time = " ".join(parts)
     else:
         if h > 0:
-            time = f"{h}:{m:02d}:{s:02d}"
+            time = f"{h}:{m:02d}"
         elif m > 0:
-            time = f"{m}:{s:02d}"
-        else:
-            time = f"{s}s"
+            time = f"{m}"
+
+        if seconds:
+            if time:
+                time += f":{s:02d}"
+            else:
+                time = f"{s}"
+        elif not time:
+            time = "&lt;1m"
     return time
     
 def production(prod):
@@ -80,25 +85,25 @@ def queue_entry(entry, now):
         progress = min(100, max(0, ((now - start) / (end - start)) * 100))
     return name, remaining, progress
 
-def format_queue_entry(entry, now, not_seconds):
+def format_queue_entry(entry, now, seconds):
     """Formato amigable para mostrar una queue"""
     name, remaining, progress = queue_entry(entry, now)
     color = progress_color(progress)
     barra = barra_html(progress, 100, color)
-    time = time_str(remaining, not_seconds)
+    time = time_str(remaining, seconds)
     aux = f"{name} [{int(progress)}%] ({time})"
     if len(aux) > 35:
         return f"{name}<br>[{int(progress)}%] ({time})<br>{barra}"
     else:
         return f"{aux}<br>{barra}"
 
-def format_research_queue_entry(entry, now, not_seconds):
+def format_research_queue_entry(entry, now, seconds):
     """Formato amigable para mostrar una queue de Investigación"""
     name, remaining, progress = queue_entry(entry, now)
     color = progress_color(progress, 89)
     color = "#0f0" if progress < 89 else "#ff0" if progress < 95 else "#f00"
     barra = barra_html(progress, 100, color, 50)
-    return f"{barra} {name} [{progress:.2f}%] ({time_str(remaining, not_seconds)})"
+    return f"{barra} {name} [{progress:.2f}%] ({time_str(remaining, seconds)})"
 
 def planet_production_entry(cant, cap, prodInt, color = "#fff"):
     if cant < cap or prodInt < 0:
