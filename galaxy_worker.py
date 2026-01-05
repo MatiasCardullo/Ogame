@@ -2,7 +2,7 @@ import os
 import time, json, requests, browser_cookie3, sys, traceback
 
 from sympy import O
-from text import cantidad
+from text import cantidad, draw_box
 
 def close():
     print("\nCerrando en    ", end='')
@@ -74,27 +74,28 @@ class GalaxyWorker:
         self.CRYSTAL = 0
         self.DEUTERIUM = 0
 
-    def parse_galaxy_response(self, text):
+    def parse_galaxy_response(self, text, response=None):
+        # Extraer cookie de sesión de la respuesta si existe
+        session_cookie = None
+        if response:
+            if "prsess_100170" in response.cookies:
+                session_cookie = response.cookies["prsess_100170"]
+        
         text = text.strip()
-
         if not text.startswith("{"):
             print("\n⚠️ Non-JSON response (first 200 chars):")
             print(text[:200])
-            return None, {}
+            return {}, session_cookie
 
-        data = json.loads(text)
-
-        token = data.get("newAjaxToken")
+        data = json.loads(text)        
         system = data.get("system") or {}
         galaxy_content = system.get("galaxyContent") or []
 
         parsed = {}
-
         for row in galaxy_content:
             pos = row.get("position")
             if not pos:
                 continue
-
             entry = {}
             if pos == 16:
                 planets = [row.get("planets")]
@@ -104,9 +105,7 @@ class GalaxyWorker:
             for body in planets:
                 if not isinstance(body, dict):
                     continue
-
                 ptype = body.get("planetType")
-
                 if ptype == 1:
                     self.PLANETS+=1
                     entry["player"] = row.get("player", {}).get("playerName")
@@ -140,7 +139,7 @@ class GalaxyWorker:
                 parsed[str(pos)] = entry
 
         parsed["updated"] = time.time()
-        return token, parsed
+        return parsed, session_cookie
 
     def run(self):
         BASE_URL = "https://s163-ar.ogame.gameforge.com/game/index.php"
@@ -153,7 +152,6 @@ class GalaxyWorker:
         }
 
         data = {}
-        token = None
 
         # Login inicial
         session = ensure_logged_in("profile_data", self.galaxy)
@@ -173,8 +171,6 @@ class GalaxyWorker:
         print(f"\n\n\n")
         for s in self.systems:
             payload = {"galaxy": g, "system": s}
-            if token:
-                payload["token"] = token
 
             max_retries = 5
             retry_count = 0
@@ -183,12 +179,15 @@ class GalaxyWorker:
             while retry_count < max_retries and parsed is None:
                 try:
                     r = session.post(BASE_URL, params=PARAMS, data=payload, timeout=10)
-                    token, parsed = self.parse_galaxy_response(r.text)
+                    parsed, session_cookie = self.parse_galaxy_response(r.text, r)
+                    
+                    # Actualizar la cookie de sesión si se recibió una nueva
+                    if session_cookie:
+                        session.cookies.set("prsess_100170", session_cookie)
 
                     if parsed == {}:
-                        print(f"G:{g} S:{s} - Respuesta vacía, relogueando...")
+                        print(f"{g}:{s} - Respuesta vacía, relogueando...")
                         session = ensure_logged_in("profile_data", self.galaxy)
-                        token = None
                         retry_count += 1
                         continue
 
@@ -197,16 +196,16 @@ class GalaxyWorker:
                         if retry_count < max_retries:
                             wait_time = 2 ** retry_count
                             print(
-                                f"\rG:{g} S:{s} - Respuesta inválida, "
+                                f"\r{g}:{s} - Respuesta inválida, "
                                 f"reintentando en {wait_time}s ({retry_count}/{max_retries})  ",
                                 end='', flush=True
                             )
                             time.sleep(wait_time)
                         else:
-                            print(f"\nG:{g} S:{s} - Error tras {max_retries} reintentos")
+                            print(f"\n{g}:{s} - Error tras {max_retries} reintentos")
                     else:
                         if retry_count > 0:
-                            print(f"G:{g} S:{s} - OK tras {retry_count} reintento(s)")
+                            print(f"{g}:{s} - OK tras {retry_count} reintento(s)")
                         break
 
                 except Exception as e:
@@ -214,28 +213,26 @@ class GalaxyWorker:
                     if retry_count < max_retries:
                         wait_time = 2 ** retry_count
                         print(
-                            f"\rG:{g} S:{s} - Error conexión: {e}, "
+                            f"\r{g}:{s} - Error conexión: {e}, "
                             f"reintentando en {wait_time}s ({retry_count}/{max_retries})",
                             end='', flush=True
                         )
                         time.sleep(wait_time)
                     else:
-                        print(f"\nG:{g} S:{s} - Error tras {max_retries} reintentos: {e}")
+                        print(f"\n{g}:{s} - Error tras {max_retries} reintentos: {e}")
 
             data[str(g)][str(s)] = parsed
 
             if parsed and len(parsed) > 1:
-                time.sleep(0.35)
-            time.sleep(0.25)
-            line1 = f"G:{g} S:{s} Espacios ocupados:{(len(parsed)-1)}                     "
-            line2 = f"Planetas:{self.PLANETS} Lunas:{self.MOONS} Debris:{self.DEBRIS}                     "
-            line3 = f"Total recursos: Metal:{cantidad(self.METAL)}; Cristal:{cantidad(self.CRYSTAL)}; Deuterio:{cantidad(self.DEUTERIUM)}"
-            print(f"\033[2A\r{line1}\n\033[K{line2}\n\033[K{line3}", end='', flush=True)
+                time.sleep(0.4)
+            line1 = f"{g}:{s} Espacios ocupados: {(len(parsed)-1)} --- Planetas: {self.PLANETS} Lunas: {self.MOONS}"
+            line2 = f"Escombros: {self.DEBRIS} -> Metal: {cantidad(self.METAL)} Cristal: {cantidad(self.CRYSTAL)} Deuterio: {cantidad(self.DEUTERIUM)}"
+            draw_box([line1,line2])
         output_file = f"galaxy_data_g{g}.json"
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
-        print(f"\n[GALAXY {self.galaxy}] Guardado en {output_file}")
+        print(f"[GALAXY {self.galaxy}] Guardado en {output_file}")
 
 if __name__ == "__main__":
     full_scan = len(sys.argv) < 3

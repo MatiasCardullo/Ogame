@@ -116,3 +116,25 @@ def planet_production_entry(cant, cap, prodInt, color = "#fff"):
     char = progress_color((cant / cap) * 100)
     barra = barra_html(cant, cap, color, 19) + f"<span style='color:{char};'>{'█'}</span>"
     return f"<td>{cantidad(cant)} {full}<br>{barra}"
+
+import sys
+
+def draw_box(lines, clear_prev=True):
+    """
+    Dibuja un rectángulo ASCII con texto y lo actualiza sobre el anterior.
+    """
+    if not lines:
+        return
+    width = max(len(line) for line in lines)
+    height = len(lines) + 2  # bordes arriba y abajo
+    if clear_prev:
+        # Subir el cursor tantas líneas como ocupó el cuadro anterior
+        sys.stdout.write(f"\033[{height}A")
+    top = "┌" + "─" * (width + 2) + "┐"
+    bottom = "└" + "─" * (width + 2) + "┘"
+    print(top)
+    for line in lines:
+        print(f"│ {line.ljust(width)} │")
+    print(bottom)
+    sys.stdout.flush()
+
