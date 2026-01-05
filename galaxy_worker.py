@@ -1,11 +1,16 @@
 import os
 import time, json, requests, browser_cookie3, sys, traceback
 
+from sympy import O
+from text import cantidad
+
 def close():
-    print("\nCerrando en ", end='', flush=True)
-    for i in range(100, 0, -1):
-        print(i, end="   ", flush=True)
+    print("\nCerrando en    ", end='')
+    for i in range(99, 0, -1):
+        print('\b' if i>8 else '', end='')
+        print(f"\b\b{i} ", end='', flush=True)
         time.sleep(1)
+    print("\r                ")
     sys.exit(1)
 
 def load_ogame_session(profile_path):
@@ -57,72 +62,85 @@ def parse_systems_arg(arg):
 
     raise ValueError(f"Sistemas inválidos: '{arg}'")
 
-def parse_galaxy_response(text):
-    text = text.strip()
-
-    if not text.startswith("{"):
-        print("⚠️ Non-JSON response (first 200 chars):")
-        print(text[:200])
-        return None, {}
-
-    data = json.loads(text)
-
-    token = data.get("newAjaxToken")
-    system = data.get("system") or {}
-    galaxy_content = system.get("galaxyContent") or []
-
-    parsed = {}
-
-    for row in galaxy_content:
-        pos = row.get("position")
-        if not pos:
-            continue
-
-        entry = {}
-        if pos == 16:
-            planets = [row.get("planets")]
-        else:
-            planets = row.get("planets")
-
-        for body in planets:
-            if not isinstance(body, dict):
-                continue
-
-            ptype = body.get("planetType")
-
-            if ptype == 1:
-                entry["player"] = row.get("player", {}).get("playerName")
-                entry["planet"] = {
-                    "name": body.get("planetName"),
-                    "isDestroyed": body.get("isDestroyed", False)
-                }
-            elif ptype == 2:
-                res = body.get("resources") or {}
-                entry["debris"] = {
-                    "requiredShips": body.get("requiredShips"),
-                    "metal": res.get("metal", {}).get("amount", 0),
-                    "crystal": res.get("crystal", {}).get("amount", 0),
-                    "deuterium": res.get("deuterium", {}).get("amount", 0)
-                }
-            elif ptype == 3:
-                entry["player"] = row.get("player", {}).get("playerName")
-                entry["moon"] = {
-                    "name": body.get("planetName"),
-                    "isDestroyed": body.get("isDestroyed", False),
-                    "size": body.get("size")
-                }
-
-        if entry:
-            parsed[str(pos)] = entry
-
-    parsed["updated"] = time.time()
-    return token, parsed
-
 class GalaxyWorker:
     def __init__(self, galaxy, systems=None, full_scan=True):
         self.galaxy = galaxy
         self.systems = systems or range(1, 500)
         self.full_scan = full_scan
+        self.PLANETS = 0
+        self.MOONS = 0
+        self.DEBRIS = 0
+        self.METAL = 0
+        self.CRYSTAL = 0
+        self.DEUTERIUM = 0
+
+    def parse_galaxy_response(self, text):
+        text = text.strip()
+
+        if not text.startswith("{"):
+            print("\n⚠️ Non-JSON response (first 200 chars):")
+            print(text[:200])
+            return None, {}
+
+        data = json.loads(text)
+
+        token = data.get("newAjaxToken")
+        system = data.get("system") or {}
+        galaxy_content = system.get("galaxyContent") or []
+
+        parsed = {}
+
+        for row in galaxy_content:
+            pos = row.get("position")
+            if not pos:
+                continue
+
+            entry = {}
+            if pos == 16:
+                planets = [row.get("planets")]
+            else:
+                planets = row.get("planets")
+
+            for body in planets:
+                if not isinstance(body, dict):
+                    continue
+
+                ptype = body.get("planetType")
+
+                if ptype == 1:
+                    self.PLANETS+=1
+                    entry["player"] = row.get("player", {}).get("playerName")
+                    entry["planet"] = {
+                        "name": body.get("planetName"),
+                        "isDestroyed": body.get("isDestroyed", False)
+                    }
+                elif ptype == 2:
+                    self.DEBRIS+=1
+                    res = body.get("resources") or {}
+                    m = int(res.get("metal", {}).get("amount",0))
+                    c = int(res.get("crystal", {}).get("amount",0))
+                    d = int(res.get("deuterium", {}).get("amount",0))
+                    if m: self.METAL += m
+                    if c: self.CRYSTAL += c
+                    if d: self.DEUTERIUM += d
+                    entry["debris"] = {
+                        "requiredShips": body.get("requiredShips"),
+                        "metal": m, "crystal": c, "deuterium": d
+                    }
+                elif ptype == 3:
+                    self.MOONS+=1
+                    entry["player"] = row.get("player", {}).get("playerName")
+                    entry["moon"] = {
+                        "name": body.get("planetName"),
+                        "isDestroyed": body.get("isDestroyed", False),
+                        "size": body.get("size")
+                    }
+
+            if entry:
+                parsed[str(pos)] = entry
+
+        parsed["updated"] = time.time()
+        return token, parsed
 
     def run(self):
         BASE_URL = "https://s163-ar.ogame.gameforge.com/game/index.php"
@@ -152,6 +170,7 @@ class GalaxyWorker:
 
         data.setdefault(str(g), {})
 
+        print(f"\n\n\n")
         for s in self.systems:
             payload = {"galaxy": g, "system": s}
             if token:
@@ -164,10 +183,10 @@ class GalaxyWorker:
             while retry_count < max_retries and parsed is None:
                 try:
                     r = session.post(BASE_URL, params=PARAMS, data=payload, timeout=10)
-                    token, parsed = parse_galaxy_response(r.text)
+                    token, parsed = self.parse_galaxy_response(r.text)
 
                     if parsed == {}:
-                        print(f"\nG:{g} S:{s} - Respuesta vacía, relogueando...")
+                        print(f"G:{g} S:{s} - Respuesta vacía, relogueando...")
                         session = ensure_logged_in("profile_data", self.galaxy)
                         token = None
                         retry_count += 1
@@ -208,9 +227,10 @@ class GalaxyWorker:
             if parsed and len(parsed) > 1:
                 time.sleep(0.35)
             time.sleep(0.25)
-
-            print(f"\rG:{g} S:{s}", end='', flush=True)
-
+            line1 = f"G:{g} S:{s} Espacios ocupados:{(len(parsed)-1)}                     "
+            line2 = f"Planetas:{self.PLANETS} Lunas:{self.MOONS} Debris:{self.DEBRIS}                     "
+            line3 = f"Total recursos: Metal:{cantidad(self.METAL)}; Cristal:{cantidad(self.CRYSTAL)}; Deuterio:{cantidad(self.DEUTERIUM)}"
+            print(f"\033[2A\r{line1}\n\033[K{line2}\n\033[K{line3}", end='', flush=True)
         output_file = f"galaxy_data_g{g}.json"
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)

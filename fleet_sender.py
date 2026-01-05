@@ -2,7 +2,7 @@
 Módulo para enviar flotas en OGame con validaciones y manejo de errores
 Estrategia de token AJAX: Se obtiene de cualquier endpoint API exitoso
 """
-import requests, time, json, re, traceback
+import requests, time, json, traceback
 from datetime import datetime
 from galaxy_worker import load_ogame_session
 from typing import Optional
@@ -36,7 +36,7 @@ def get_ajax_token(session) -> Optional[str]:
     
     # Retornar token en cache si es válido
     if _is_token_valid():
-        print(f"[FLEET] ✅ Usando token en cache")
+        #print(f"[FLEET] ✅ Usando token en cache")
         return _token_cache["token"]
     
     try:
@@ -52,10 +52,7 @@ def get_ajax_token(session) -> Optional[str]:
         
         response = session.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-        
-        print(f"[FLEET] Respuesta de eventList: {response.status_code}")
-        
-        # Intenta parsear como JSON
+                
         try:
             data = response.json()
             if isinstance(data, dict) and "newAjaxToken" in data:
@@ -66,15 +63,6 @@ def get_ajax_token(session) -> Optional[str]:
                 return token
         except json.JSONDecodeError:
             pass
-        
-        # Si la respuesta es HTML, buscar el token con regex
-        token_match = re.search(r'"newAjaxToken"\s*:\s*"([a-f0-9]{32})"', response.text)
-        if token_match:
-            token = token_match.group(1)
-            _token_cache["token"] = token
-            _token_cache["timestamp"] = datetime.now()
-            print(f"[FLEET] ✅ Token AJAX obtenido de HTML: {token[:16]}...")
-            return token
         
         print("[FLEET] ⚠️  No se pudo extraer token AJAX")
         return None
@@ -201,28 +189,24 @@ def send_fleet(fleet_data, profile_path="profile_data"):
             "Referer": f"https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame&component=fleetdispatch&cp={cp_str}&mission={mission_id}&position={p}&type=1&galaxy={g}&system={s}"
         })
         
-        print(f"[FLEET] Enviando {total_ships} naves a {g}:{s}:{p}")
-        print(f"[FLEET] Misión: {mission_name}")
-        print(f"[FLEET] Token: {ajax_token[:16]}...")
+        print(f"[FLEET] Enviando {total_ships} naves a {g}:{s}:{p} - Misión: {mission_name}")
         
         response = session.post(url, data=payload, timeout=10)
-        
-        print(f"[FLEET] Respuesta HTTP: {response.status_code}")
         
         # Verificar respuesta
         if response.status_code == 200:
             try:
                 response_data = response.json()
-                print(f"[FLEET] Respuesta JSON: {response_data}")
                 
+                with open("fleets.log", "a", encoding="utf-8") as f:
+                    f.write(f"[{datetime.now()}] Respuesta JSON: {response_data}")
                 # Actualizar token para próximo envío
                 update_token_from_response(response_data)
                 
                 # Verificar si el envío fue exitoso
                 if response_data.get("success"):
                     message = response_data.get("message", "Flota enviada")
-                    print(f"✅ Flota enviada exitosamente")
-                    print(f"   {message}")
+                    print(f"✅ {message}")
                     return True, f"Flota enviada: {total_ships} naves"
                 else:
                     # Manejar errores

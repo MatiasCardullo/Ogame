@@ -29,10 +29,7 @@ def time_str(t, seconds = True):
     d, r = divmod(t, 86400)
     h, r = divmod(r, 3600)
     m, s = divmod(r, 60)
-    d = int(d)
-    h = int(h)
-    m = int(m)
-    s = int(s)
+    d, h, m, s = int(d), int(h), int(m), int(s)
     time = None
     if d > 0:
         parts = [f"{d}d"]
@@ -49,9 +46,12 @@ def time_str(t, seconds = True):
             if time:
                 time += f":{s:02d}"
             else:
-                time = f"{s}"
-        elif not time:
-            time = "&lt;1m"
+                time = f"{s}s"
+        else:
+            if not time:
+                time = "&lt;1m"
+            elif h == 0:
+                time += "m"
     return time
     
 def production(prod):

@@ -344,6 +344,7 @@ class MainWindow(QMainWindow):
 
     def save_research_data(self):
         """Guarda los datos de investigaciones en un archivo JSON"""
+        self.research_data = {k: v for k, v in self.research_data.items() if v.get("end", 0) > time.time()}
         try:
             with open("research_data.json", "w", encoding="utf-8") as f:
                 json.dump(self.research_data, f, indent=2, ensure_ascii=False)

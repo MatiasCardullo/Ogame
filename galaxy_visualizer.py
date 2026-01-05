@@ -1,4 +1,5 @@
 import json, sys
+from tkinter import NO
 import numpy as np
 import plotly.graph_objects as go
 from PyQt6.QtWidgets import QApplication, QMainWindow
@@ -57,29 +58,25 @@ def load_systems(path):
             has_moon = "moon" in value
             has_debris = "debris" in value
 
+            obj={
+                "r": r,
+                "coords": f"{NUM_G}:{sid}:{key}",
+                "phase": np.random.uniform(0, 2*np.pi),
+                "has_moon": has_moon,
+                "has_debris": has_debris,
+                "moon_phase": np.random.uniform(0, 2*np.pi)
+            }
+            if has_debris:
+                obj["name"] = "DEEP_SPACE"
+                obj["metal"] = value["debris"]["metal"]
+                obj["crystal"] = value["debris"]["crystal"]
+                obj["deuterium"] = value["debris"]["deuterium"]
             if has_planet:
-                planets.append({
-                    "r": r,
-                    "name": value["planet"]["name"],
-                    "coords": f"{NUM_G}:{sid}:{key}",
-                    "phase": np.random.uniform(0, 2*np.pi),
-                    "has_moon": has_moon,
-                    "has_debris": has_debris,
-                    "moon_phase": np.random.uniform(0, 2*np.pi)
-                })
-
-            elif has_debris:
-                # debris sin planeta → orbita estrella
-                planets.append({
-                    "r": r,
-                    "name": "Space",
-                    "coords": f"{NUM_G}:{sid}:{key}",
-                    "phase": np.random.uniform(0, 2*np.pi),
-                    "has_moon": False,
-                    "has_debris": True,
-                    "moon_phase": np.random.uniform(0, 2*np.pi)
-                })
-
+                obj["name"] = value["planet"]["name"]
+                if has_moon:
+                    obj["moon_name"] = value["moon"]["name"]
+                    obj["moon_size"] = value["moon"]["size"]
+            planets.append(obj)
         systems.append(planets)
     return systems
 
@@ -142,6 +139,7 @@ for t in range(FRAMES):
     moon_custom = []
     debris_custom = []
     star_color = []
+    planet_color = []
 
     donut_offset = DONUT_SPEED * t
 
@@ -153,8 +151,12 @@ for t in range(FRAMES):
         # ⭐ estrella
         x_stars.append(cx)
         y_stars.append(cy)
-        star_hover.append(f"System: {i}")
-        star_color.append("yellow" if planets else "#505000")
+        if planets:
+            star_hover.append(f"System: {i}")
+            star_color.append("yellow")
+        else:
+            star_hover.append(None)
+            star_color.append("#010101")
         star_custom.append(i)
 
         for p in planets:
@@ -171,9 +173,12 @@ for t in range(FRAMES):
 
             x_planets.append(px)
             y_planets.append(py)
-            planet_hover.append(
-                f"Planet: {p['name']}<br>Coords: {p['coords']}"
-            )
+            if p['name']=="DEEP_SPACE":
+                planet_hover.append(None)
+                planet_color.append("#010101")
+            else:
+                planet_hover.append(f"Planet: {p['name']}<br>Coords: {p['coords']}")
+                planet_color.append("white")
             planet_custom.append(i)
 
 
@@ -191,7 +196,7 @@ for t in range(FRAMES):
                 x_moons.append(mx)
                 y_moons.append(my)
                 moon_hover.append(
-                    f"Moon: {p['name']}<br>Coords: {p['coords']}"
+                    f"Moon: {p['moon_name']}<br>Coords: {p['coords']}"
                 )
                 moon_custom.append(i)
 
@@ -210,6 +215,9 @@ for t in range(FRAMES):
 
                 x_debris.append(dx)
                 y_debris.append(dy)
+                debris_hover.append(
+                    f"Debris coords: {p['coords']}<br>Metal: {p['metal']}<br>Crystal: {p['crystal']}<br>Deuterium: {p['deuterium']}"
+                )
                 debris_custom.append(i)
 
 
@@ -246,6 +254,8 @@ for t in range(FRAMES):
             y=y_debris,
             mode="markers",
             marker=dict(size=3, color="red"),
+            hovertext=debris_hover,
+            hoverinfo="text",
             customdata=debris_custom
         )
     ]))
