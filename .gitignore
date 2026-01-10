@@ -6,3 +6,4 @@
 /socket-server/node_modules
 *.har
 *.log
+/.github

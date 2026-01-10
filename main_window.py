@@ -10,7 +10,7 @@ from custom_page import CustomWebPage
 from debris_tab import create_debris_tab
 from fleet_tab import _refresh_scheduled_fleets_list, auto_send_scheduled_fleets, create_fleets_tab, save_scheduled_fleets, update_fleet_origin_combo
 from panel import handle_main_web_resources, refresh_resources_panel
-from socket_tab import create_socket_tab
+from communication_tab import create_comms_tab
 from sprite_widget import SpriteWidget
 import time, os, json
 from js_scripts import (
@@ -235,7 +235,7 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(self.main_panel)
 
         # ----- Tab Comunicaciones -----
-        comunication_tab = create_socket_tab("https://TU-DOMINIO-O-NGROK:3000")
+        comunication_tab = create_comms_tab("https://TU-DOMINIO-O-NGROK:3000")
         self.tabs.addTab(comunication_tab, "Socket Control")
 
         self.setCentralWidget(self.tabs)
