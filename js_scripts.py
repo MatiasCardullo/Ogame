@@ -491,11 +491,8 @@ auction_listener = """
     })();
 """
 
-msg_listener = """
+check_msg = """
     (function () {
-        console.log("INJECTED EARLY - Mensaje listener iniciado");
-
-        function checkMessages() {
             const data = {};
             console.log("[checkMessages] ", data);
 
@@ -508,17 +505,7 @@ msg_listener = """
             if (chat) {
                 data.chat = parseInt(chat.getAttribute('data-new-messages'));
             }
-        }
-
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => {
-                checkMessages();
-                setInterval(checkMessages, 1000);
-            });
-        } else {
-            checkMessages();
-            setInterval(checkMessages, 1000);
-        }
+        return data
     })();
 """
 

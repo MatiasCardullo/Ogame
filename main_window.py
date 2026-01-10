@@ -15,7 +15,7 @@ from sprite_widget import SpriteWidget
 import time, os, json
 from js_scripts import (
     in_game, extract_meta_script, extract_resources_script, auction_listener,
-    msg_listener, extract_planet_array, extract_fleets_script
+    extract_planet_array, extract_fleets_script
 )
 from text import time_str_to_ms
 
@@ -37,20 +37,14 @@ class MainWindow(QMainWindow):
         profile.setCachePath(os.path.abspath("profile_data/cache"))
         self.profile = profile
 
-        script = QWebEngineScript()
-        script.setName("listener_hook")
-        script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
-        script.setRunsOnSubFrames(True)
-        script.setSourceCode(msg_listener)
-        self.profile.scripts().insert(script)
-        
         # Tabs
         self.tabs = QTabWidget()
 
         # ----- Tab navegador -----
         self.browser_tab = QWidget()
         self.browser_box = QHBoxLayout()
-        self.base_url = "https://s163-ar.ogame.gameforge.com/game/index.php"
+        self.base_url = "https://s163-ar.ogame.gameforge.com"
+        self.url_ingame = self.base_url + "/game/index.php?page=ingame"
         # Login
         self.login = self.web_engine(profile, url)
         if not logged :
@@ -81,10 +75,10 @@ class MainWindow(QMainWindow):
         
         # Define pages with their URLs
         self.pages_config = [
-            ("Main", f"{self.base_url}?page=ingame&component=overview"),
-            ("Flotas", f"{self.base_url}?page=ingame&component=movement"),
-            ("Imperio", f"{self.base_url}?page=standalone&component=empire"),
-            ("Subasta", f"{self.base_url}?page=ingame&component=traderOverview#animation=false&page=traderAuctioneer")
+            ("Main", f"{self.url_ingame}&component=overview"),
+            ("Flotas", f"{self.url_ingame}&component=movement"),
+            ("Imperio", f"{self.base_url}/game/index.php?page=standalone&component=empire"),
+            ("Subasta", f"{self.url_ingame}&component=traderOverview#animation=false&page=traderAuctioneer")
         ]
         
         # Create web views for all pages
@@ -235,7 +229,7 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(self.main_panel)
 
         # ----- Tab Comunicaciones -----
-        comunication_tab = create_comms_tab("https://TU-DOMINIO-O-NGROK:3000")
+        comunication_tab = create_comms_tab("https://TU-DOMINIO-O-NGROK:3000",self)
         self.tabs.addTab(comunication_tab, "Socket Control")
 
         self.setCentralWidget(self.tabs)
@@ -669,7 +663,7 @@ class MainWindow(QMainWindow):
         moon = planet.get('moon')  # Puede ser None o dict con {id, name}
         
         # Construir URL usando planet_id (cp = current planet)
-        planet_url = f"{self.base_url}?page=ingame&component=overview&cp={planet_id}"
+        planet_url = f"{self.url_ingame}&component=overview&cp={planet_id}"
         
         print(f"[DEBUG] Cargando planeta {self.current_planet_index + 1}/{len(self.planets_to_load)}: {planet_name} (ID: {planet_id}) en main_web")
 
@@ -715,7 +709,7 @@ class MainWindow(QMainWindow):
             self.current_planet_parent_key = parent_id
             
             # Construir URL usando moon_id
-            moon_url = f"{self.base_url}?page=ingame&component=overview&cp={moon_id}"
+            moon_url = f"{self.url_ingame}&component=overview&cp={moon_id}"
             
             print(f"[DEBUG] Cargando luna {moon_name} (ID: {moon_id}) en main_web")
 

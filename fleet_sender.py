@@ -199,7 +199,7 @@ def send_fleet(fleet_data, profile_path="profile_data"):
                 response_data = response.json()
                 
                 with open("fleets.log", "a", encoding="utf-8") as f:
-                    f.write(f"[{datetime.now()}] Respuesta JSON: {response_data}")
+                    f.write(f"[{datetime.now()}] Respuesta JSON: {response_data}\n")
                 # Actualizar token para próximo envío
                 update_token_from_response(response_data)
                 

@@ -222,12 +222,17 @@ class GalaxyWorker:
                         print(f"\n{g}:{s} - Error tras {max_retries} reintentos: {e}")
 
             data[str(g)][str(s)] = parsed
-
-            if parsed and len(parsed) > 1:
-                time.sleep(0.4)
-            line1 = f"{g}:{s} Espacios ocupados: {(len(parsed)-1)} --- Planetas: {self.PLANETS} Lunas: {self.MOONS}"
+            
             line2 = f"Escombros: {self.DEBRIS} -> Metal: {cantidad(self.METAL)} Cristal: {cantidad(self.CRYSTAL)} Deuterio: {cantidad(self.DEUTERIUM)}"
-            draw_box([line1,line2])
+            if parsed and len(parsed) > 1:
+                for i in range(4):
+                    time.sleep(0.1)
+                    load = '─' * i + '>' + '-' * (3-i)
+                    line1 = f"{g}:{s} Espacios ocupados: {(len(parsed)-1)} {load}Planetas: {self.PLANETS} Lunas: {self.MOONS}"
+                    draw_box([line1,line2])
+            else:
+                line1 = f"{g}:{s} Espacios ocupados: {(len(parsed)-1)} ---- Planetas: {self.PLANETS} Lunas: {self.MOONS}"
+                draw_box([line1,line2])
         output_file = f"galaxy_data_g{g}.json"
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
