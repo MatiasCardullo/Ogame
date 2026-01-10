@@ -15,8 +15,9 @@ from sprite_widget import SpriteWidget
 import time, os, json
 from js_scripts import (
     in_game, extract_meta_script, extract_resources_script, auction_listener,
-    extract_planet_array, extract_fleets_script
+    msg_listener, extract_planet_array, extract_fleets_script
 )
+from text import time_str_to_ms
 
 logged = True
 os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
@@ -36,6 +37,13 @@ class MainWindow(QMainWindow):
         profile.setCachePath(os.path.abspath("profile_data/cache"))
         self.profile = profile
 
+        script = QWebEngineScript()
+        script.setName("listener_hook")
+        script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+        script.setRunsOnSubFrames(True)
+        script.setSourceCode(msg_listener)
+        self.profile.scripts().insert(script)
+        
         # Tabs
         self.tabs = QTabWidget()
 
@@ -95,13 +103,7 @@ class MainWindow(QMainWindow):
                 web.loadFinished.connect(lambda: self.on_fleets_page_loaded())
             # Conectar extracción de subasta
             if i == 3:
-                script = QWebEngineScript()
-                script.setName("auctioneer_hook")
-                script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
-                script.setRunsOnSubFrames(True)
-                script.setSourceCode(auction_listener)
-                self.profile.scripts().insert(script)
-
+                web.loadFinished.connect(lambda: self.on_auction_page_loaded())
             
             # Monitorear cambios de URL para detectar desconexión
             web.urlChanged.connect(lambda url, page_idx=i: self.check_disconnection(url, page_idx))
@@ -564,7 +566,7 @@ class MainWindow(QMainWindow):
                 }
                 let targetBtn = null;
                 let intentos = 0;
-                while (!targetBtn && intentos < 50) { // 50 intentos = 50 * 200ms = 10s
+                while (!targetBtn && intentos < 50) {
                     const buttons = document.querySelectorAll('button.button.button-default.button-md');
                     for (const btn of buttons) {
                         if (btn.textContent.includes("Jugado por última vez")) {
@@ -574,7 +576,7 @@ class MainWindow(QMainWindow):
                     }
                     if (!targetBtn) {
                         console.log('[AUTOCLICK] Esperando botón... intento ', intentos);
-                        await sleep(200);
+                        await sleep(5000);
                         intentos++;
                     }
                 }
@@ -750,11 +752,28 @@ class MainWindow(QMainWindow):
 
     def on_fleets_page_loaded(self):
         """Extrae información de flotas cuando carga pages_views[1]"""
-        if not hasattr(self, 'pages_views') or len(self.pages_views) < 2:
-            return
-        
         fleets_web = self.pages_views[1]['web']
         fleets_web.page().runJavaScript(extract_fleets_script, self.handle_fleets_data)
+
+    def on_auction_page_loaded(self):
+        """Extrae información de la subasta cuando carga pages_views[3]"""
+        auction_web = self.pages_views[3]['web']
+
+        def handle_auction_data(data):
+            print(data)
+            if data:
+                wait = data.get('nextAuction', None)
+                if wait:
+                    print(f"Next auction in {wait}")
+                    QTimer.singleShot(time_str_to_ms(wait), auction_web.reload)
+                else:
+                    wait = data.get('endAuction', "approx. 5m")
+                    print(f"End of auction in {wait}")
+                    wait = wait.split()[1]
+                    QTimer.singleShot((time_str_to_ms(wait) - 300001), auction_web.reload)
+                
+
+        auction_web.page().runJavaScript(auction_listener, handle_auction_data)
 
     def update_fleets_from_page(self):
         """Actualiza fleets_data extrayendo datos de pages_views[1]"""
@@ -777,7 +796,7 @@ class MainWindow(QMainWindow):
             self.fleet_slots = data.get("fleetSlots", {"current": 0, "max": 0})
             self.exp_slots = data.get("expSlots", {"current": 0, "max": 0})
             #print(f"[FLEETS] ✅ Cargadas {len(self.fleets_data)} flotas desde pages_views[1]")
-            #print(f"[FLEETS] Slots - Flotas: {self.fleet_slots['current']}/{self.fleet_slots['max']}, Expediciones: {self.exp_slots['current']}/{self.exp_slots['max']}")
+            #print(f"[FLEETS] Slots - Flotas: {self.fleet_slots}, Expediciones: {self.exp_slots}")
             # Actualizar timestamp
             self.last_fleet_update = time.time()
             try:

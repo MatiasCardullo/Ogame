@@ -328,6 +328,30 @@ extract_fleets_script = """
             }
         }
         
+        // Fallback: buscar en #slots si no se encontraron slots anteriores
+        if (result.fleetSlots.current === 0 && result.fleetSlots.max === 0) {
+            const slotsDiv = document.querySelector('div#slots');
+            if (slotsDiv) {
+                const spans = slotsDiv.querySelectorAll('span.tooltip.advice');
+                spans.forEach(span => {
+                    const text = span.textContent.trim();
+                    if (text.includes('Escuadrón')) {
+                        const match = text.match(/(\\d+)\\/(\\d+)/);
+                        if (match) {
+                            result.fleetSlots.current = parseInt(match[1]);
+                            result.fleetSlots.max = parseInt(match[2]);
+                        }
+                    } else if (text.includes('Expediciones')) {
+                        const match = text.match(/(\\d+)\\/(\\d+)/);
+                        if (match) {
+                            result.expSlots.current = parseInt(match[1]);
+                            result.expSlots.max = parseInt(match[2]);
+                        }
+                    }
+                });
+            }
+        }
+        
         // Buscar elementos con clase 'fleetDetails'
         const fleetDivs = document.querySelectorAll('div.fleetDetails');
         
@@ -440,25 +464,62 @@ extract_fleets_script = """
         return result;
     })();
 """
+
 auction_listener = """
-(function() {
-    console.log("INJECTED EARLY");
-
-    const open = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function(method, url) {
-        this._url = url;
-        return open.apply(this, arguments);
-    };
-
-    const send = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(body) {
-        this.addEventListener("load", function() {
-            if (this._url && this._url.includes("traderauctioneer")) {
-                console.log("[AUCTIONEER]", this.responseText);
+    (function () {
+        const result = { };
+        nextAuction = document.querySelector('span#nextAuction');
+        if (nextAuction) {
+            result.nextAuction = nextAuction.textContent;
+        } else {
+            endAuction = document.querySelector('p.auction_info');
+            if (endAuction) {
+                result.endAuction = endAuction.querySelector('span').querySelector('span').textContent
             }
-        });
-        return send.apply(this, arguments);
-    };
-})();
+            currentSum = document.querySelector('div.currentSum');
+            if (currentSum) {
+                result.currentSum = parseInt(currentSum.textContent.replace('.', ''));
+            }
+            player = document.querySelector('a.currentPlayer');
+            if (player) {
+                result.player_id = parseInt(player.getAttribute('data-player-id'));
+                result.player_name = player.textContent.trim();
+            }
+        }
+        console.log("[OGameDebug] ",result);
+        return result;
+    })();
 """
+
+msg_listener = """
+    (function () {
+        console.log("INJECTED EARLY - Mensaje listener iniciado");
+
+        function checkMessages() {
+            const data = {};
+            console.log("[checkMessages] ", data);
+
+            const msg = document.querySelector('div.messagesIndicator');
+            if (msg) {
+                data.msg = parseInt(msg.getAttribute('data-new-messages'));
+            }
+
+            const chat = document.querySelector('div.chatIndicator');
+            if (chat) {
+                data.chat = parseInt(chat.getAttribute('data-new-messages'));
+            }
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                checkMessages();
+                setInterval(checkMessages, 1000);
+            });
+        } else {
+            checkMessages();
+            setInterval(checkMessages, 1000);
+        }
+    })();
+"""
+
 
