@@ -1,3 +1,5 @@
+import sys, re
+
 def barra_html(cant, cap, color, size = 20):
     try:
         if cap <= 0:
@@ -65,9 +67,9 @@ def production(prod):
 
 def cantidad(cant):
     if cant > 1000000:
-        cant_t = f"{(cant/1000000):.02f}M"
+        cant_t = f"{(cant/1000000):.3g}M"
     elif cant > 1000:
-        cant_t = f"{(cant/1000):.02f}k"
+        cant_t = f"{(cant/1000):.3g}k"
     else:
         cant_t = f"{int(cant)}"
     return cant_t
@@ -82,18 +84,18 @@ def queue_entry(entry, now):
     remaining = max(0, end - now)
     progress = 0
     if end > start:
-        progress = min(100, max(0, ((now - start) / (end - start)) * 100))
+        progress = (now - start) / (end - start)
     return name, remaining, progress
 
 def format_queue_entry(entry, now, seconds):
     """Formato amigable para mostrar una queue"""
     name, remaining, progress = queue_entry(entry, now)
     color = progress_color(progress)
-    barra = barra_html(progress, 100, color)
+    barra = barra_html(progress, 1, color)
     time = time_str(remaining, seconds)
-    aux = f"{name} [{int(progress)}%] ({time})"
+    aux = f"{name} [{progress:.0%}] ({time})"
     if len(aux) > 35:
-        return f"{name}<br>[{int(progress)}%] ({time})<br>{barra}"
+        return f"{name}<br>[{progress:.0%}] ({time})<br>{barra}"
     else:
         return f"{aux}<br>{barra}"
 
@@ -102,8 +104,8 @@ def format_research_queue_entry(entry, now, seconds):
     name, remaining, progress = queue_entry(entry, now)
     color = progress_color(progress, 89)
     color = "#0f0" if progress < 89 else "#ff0" if progress < 95 else "#f00"
-    barra = barra_html(progress, 100, color, 50)
-    return f"{barra} {name} [{progress:.2f}%] ({time_str(remaining, seconds)})"
+    barra = barra_html(progress, 1, color, 50)
+    return f"{barra} {name} [{progress:.2%}] ({time_str(remaining, seconds)})"
 
 def planet_production_entry(cant, cap, prodInt, color = "#fff"):
     if cant < cap or prodInt < 0:
@@ -117,24 +119,40 @@ def planet_production_entry(cant, cap, prodInt, color = "#fff"):
     barra = barra_html(cant, cap, color, 19) + f"<span style='color:{char};'>{'█'}</span>"
     return f"<td>{cantidad(cant)} {full}<br>{barra}"
 
-import sys
-
 def draw_box(lines, clear_prev=True):
     """
     Dibuja un rectángulo ASCII con texto y lo actualiza sobre el anterior.
     """
     if not lines:
         return
+    # margen derecha e izquierda
+    m_d = " " * 3
+    m_i = " "
     width = max(len(line) for line in lines)
     height = len(lines) + 2  # bordes arriba y abajo
     if clear_prev:
         # Subir el cursor tantas líneas como ocupó el cuadro anterior
         sys.stdout.write(f"\033[{height}A")
-    top = "┌" + "─" * (width + 2) + "┐"
-    bottom = "└" + "─" * (width + 2) + "┘"
+    top = m_i + "┌" + "─" * (width + 2) + "┐" + m_d
+    bottom = m_i + "└" + "─" * (width + 2) + "┘" + m_d
     print(top)
     for line in lines:
-        print(f"│ {line.ljust(width)} │")
+        print(m_i + f"│ {line.ljust(width)} │" + m_d)
     print(bottom)
     sys.stdout.flush()
+
+def time_str_to_ms(time_str: str) -> int:
+    pattern = r'(\d+)\s*(h|m|s)'
+    total_ms = 0
+
+    for value, unit in re.findall(pattern, time_str.lower()):
+        value = int(value)
+        if unit == 'h':
+            total_ms += value * 60 * 60 * 1000
+        elif unit == 'm':
+            total_ms += value * 60 * 1000
+        elif unit == 's':
+            total_ms += value * 1000
+
+    return total_ms
 
