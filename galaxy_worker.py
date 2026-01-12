@@ -1,7 +1,6 @@
-import os
+import os, random
 import time, json, requests, browser_cookie3, sys, traceback
-
-from sympy import O
+from tqdm import tqdm
 from text import cantidad, draw_box
 
 def close():
@@ -151,27 +150,41 @@ class GalaxyWorker:
             "asJson": "1"
         }
 
-        data = {}
-
-        # Login inicial
-        session = ensure_logged_in("profile_data", self.galaxy)
-
         g = self.galaxy
         output_file = f"galaxy_data_g{g}.json"
 
+        # ── login inicial
+        session = ensure_logged_in("profile_data", g)
+
+        # ── cargar datos previos si existen
         if not self.full_scan and os.path.exists(output_file):
             with open(output_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            print(f"[GALAXY {g}] Archivo existente cargado, mergeando datos")
+            tqdm.write(f"[GALAXY {g}] Archivo existente cargado, mergeando datos")
         else:
             data = {}
 
         data.setdefault(str(g), {})
 
-        print(f"\n\n\n")
-        for s in self.systems:
+        pbar = tqdm(
+            self.systems,
+            desc=f"G{g} escaneando",
+            unit="sistema",
+            dynamic_ncols=True,
+            position=0
+        )
+        status_one = tqdm(
+            total=0,
+            bar_format="{desc}",
+            position=1
+        )
+        status_two = tqdm(
+            total=0,
+            bar_format="{desc}",
+            position=2
+        )
+        for s in pbar:
             payload = {"galaxy": g, "system": s}
-
             max_retries = 5
             retry_count = 0
             parsed = None
@@ -186,58 +199,50 @@ class GalaxyWorker:
                         session.cookies.set("prsess_100170", session_cookie)
 
                     if parsed == {}:
-                        print(f"{g}:{s} - Respuesta vacía, relogueando...")
-                        session = ensure_logged_in("profile_data", self.galaxy)
+                        tqdm.write(f"{g}:{s} vacío → relogin")
+                        session = ensure_logged_in("profile_data", g)
                         retry_count += 1
                         continue
 
                     if parsed is None:
                         retry_count += 1
                         if retry_count < max_retries:
-                            wait_time = 2 ** retry_count
-                            print(
-                                f"\r{g}:{s} - Respuesta inválida, "
-                                f"reintentando en {wait_time}s ({retry_count}/{max_retries})  ",
-                                end='', flush=True
-                            )
-                            time.sleep(wait_time)
+                            time.sleep(2 ** retry_count)
                         else:
-                            print(f"\n{g}:{s} - Error tras {max_retries} reintentos")
+                            tqdm.write(f"[ERROR] {g}:{s} inválido tras {max_retries} reintentos")
                     else:
-                        if retry_count > 0:
-                            print(f"{g}:{s} - OK tras {retry_count} reintento(s)")
                         break
 
                 except Exception as e:
                     retry_count += 1
                     if retry_count < max_retries:
-                        wait_time = 2 ** retry_count
-                        print(
-                            f"\r{g}:{s} - Error conexión: {e}, "
-                            f"reintentando en {wait_time}s ({retry_count}/{max_retries})",
-                            end='', flush=True
-                        )
-                        time.sleep(wait_time)
+                        time.sleep(2 ** retry_count)
                     else:
-                        print(f"\n{g}:{s} - Error tras {max_retries} reintentos: {e}")
+                        tqdm.write(f"[ERROR] {g}:{s} conexión fallida: {e}")
 
+            # guardar resultado
             data[str(g)][str(s)] = parsed
-            
-            line2 = f"Escombros: {self.DEBRIS} -> Metal: {cantidad(self.METAL)} Cristal: {cantidad(self.CRYSTAL)} Deuterio: {cantidad(self.DEUTERIUM)}"
-            if parsed and len(parsed) > 1:
-                for i in range(4):
-                    time.sleep(0.1)
-                    load = '─' * i + '>' + '-' * (3-i)
-                    line1 = f"{g}:{s} Espacios ocupados: {(len(parsed)-1)} {load}Planetas: {self.PLANETS} Lunas: {self.MOONS}"
-                    draw_box([line1,line2])
-            else:
-                line1 = f"{g}:{s} Espacios ocupados: {(len(parsed)-1)} ---- Planetas: {self.PLANETS} Lunas: {self.MOONS}"
-                draw_box([line1,line2])
-        output_file = f"galaxy_data_g{g}.json"
+            time.sleep(random.random())  # evitar rate limiting
+            # ── actualizar barra con stats
+            if parsed:
+                status_one.set_description_str(
+                    f"Sistema {s} Espacios ocupados: {len(parsed) - 1} "
+                    f"Planetas: {self.PLANETS} Lunas: {self.MOONS}"
+                )
+                status_two.set_description_str(
+                    f"Escombros: {self.DEBRIS} > "
+                    f"M={cantidad(self.METAL)} "
+                    f"C={cantidad(self.CRYSTAL)} "
+                    f"D={cantidad(self.DEUTERIUM)}"
+                )
+        pbar.close()
+        status_one.close()
+        status_two.close()
+
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
-        print(f"[GALAXY {self.galaxy}] Guardado en {output_file}")
+        tqdm.write(f"[GALAXY {g}] Guardado en {output_file}")
 
 if __name__ == "__main__":
     full_scan = len(sys.argv) < 3

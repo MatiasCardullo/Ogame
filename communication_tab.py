@@ -3,7 +3,7 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QPushButton, QGridLayout
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtCore import QUrl, QTimer
+from PyQt6.QtCore import QUrl, QTimer, QThread, pyqtSignal, QObject
 from galaxy_worker import load_ogame_session
 from js_scripts import check_msg
 
@@ -42,7 +42,7 @@ def fetch_messages(base_url, profile_path="profile_data"):
         session = load_ogame_session(profile_path)
         
         # PASO 1: Obtener tabs principales y sus contadores de mensajes
-        print("[MESSAGES] Paso 1: Obteniendo tabs principales...")
+        #print("[MESSAGES] Paso 1: Obteniendo tabs principales...")
         url_main = base_url + "/game/index.php?page=ingame&component=messages"
         response_main = session.get(url_main, timeout=10)
         response_main.raise_for_status()
@@ -74,23 +74,21 @@ def fetch_messages(base_url, profile_path="profile_data"):
                 msg_count = 0
             
             main_tabs[tab_id] = msg_count
-            print(f"  Tab {tab_id} ({tab_name}): {msg_count} mensajes")
+            #print(f"  Tab {tab_id} ({tab_name}): {msg_count} mensajes")
         
         # Buscar tabs con mensajes (cualquier tab que tenga mensajes)
         tabs_with_messages = [tid for tid, count in main_tabs.items() if count > 0]
         
         if not tabs_with_messages:
-            print("[MESSAGES] ⚠️  No hay tabs con mensajes")
+            #print("[MESSAGES] ⚠️  No hay tabs con mensajes")
             return []
-        
-        print(f"[MESSAGES] Tabs con mensajes: {tabs_with_messages}")
-        
+        #print(f"[MESSAGES] Tabs con mensajes: {tabs_with_messages}")
         all_messages = []
         
         # PASO 2: Para cada tab con mensajes, obtener sus subtabs
         for active_tab in tabs_with_messages:
             tab_name = tab_names.get(active_tab, f"Tab {active_tab}")
-            print(f"[MESSAGES] Paso 2: Obteniendo subtabs para tab {active_tab} ({tab_name})...")
+            #print(f"[MESSAGES] Paso 2: Obteniendo subtabs para tab {active_tab} ({tab_name})...")
             
             url_wrapper = base_url + "/game/index.php?page=componentOnly&component=messages&ajax=1&action=getMessageWrapper"
             response_wrapper = session.post(url_wrapper, data={"activeTab": active_tab}, timeout=10)
@@ -122,19 +120,19 @@ def fetch_messages(base_url, profile_path="profile_data"):
                         msg_count = int(numbers[0]) if numbers else 0
                 
                 sub_tabs[subtab_id] = msg_count
-                print(f"  Subtab {subtab_id} ({subtab_name}): {msg_count} mensajes")
+                #print(f"  Subtab {subtab_id} ({subtab_name}): {msg_count} mensajes")
             
             # Subtabs con mensajes
             subtabs_with_messages = [sid for sid, count in sub_tabs.items() if count > 0]
             
             if not subtabs_with_messages:
-                print(f"[MESSAGES]   ⚠️  No hay subtabs con mensajes en tab {active_tab}")
+                #print(f"[MESSAGES]   ⚠️  No hay subtabs con mensajes en tab {active_tab}")
                 continue
             
             # PASO 3: Para cada subtab con mensajes, obtener los mensajes
             for active_subtab in subtabs_with_messages:
                 subtab_name = subtab_names.get(active_subtab, f"Subtab {active_subtab}")
-                print(f"[MESSAGES] Paso 3: Obteniendo mensajes para subtab {active_subtab} ({subtab_name})...")
+                #print(f"[MESSAGES] Paso 3: Obteniendo mensajes para subtab {active_subtab} ({subtab_name})...")
                 
                 url_list = base_url + "/game/index.php?page=componentOnly&component=messages&asJson=1&action=getMessagesList"
                 response_list = session.post(
@@ -182,9 +180,6 @@ def fetch_messages(base_url, profile_path="profile_data"):
         
         if not all_messages:
             return []
-        
-        print(f"[MESSAGES] ✓ Total: {len(all_messages)} mensajes")
-        save_messages_to_file(all_messages)
         return all_messages
         
     except Exception as e:
@@ -225,8 +220,12 @@ def save_messages_to_file(messages, messages_dir="messages_log"):
         
         # Guardar mensajes en sus carpetas correspondientes
         for (tab_folder, subtab_folder), folder_messages in messages_by_location.items():
-            # Crear estructura de carpetas
-            full_path = os.path.join(messages_dir, tab_folder, subtab_folder)
+            # Si el tab y subtab son iguales, no crear carpeta extra de subtab
+            if tab_folder == subtab_folder:
+                full_path = os.path.join(messages_dir, tab_folder)
+            else:
+                full_path = os.path.join(messages_dir, tab_folder, subtab_folder)
+            
             os.makedirs(full_path, exist_ok=True)
             
             created_folders[full_path] = folder_messages
@@ -353,7 +352,7 @@ def save_messages_to_file(messages, messages_dir="messages_log"):
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(html_content)
             
-            print(f"[MESSAGES] ✓ Guardados {len(folder_messages)} mensajes en {filename}")
+            #print(f"[MESSAGES] ✓ Guardados {len(folder_messages)} mensajes en {filename}")
             
             # Actualizar archivo latest
             latest_file = os.path.join(full_path, "messages_latest.html")
@@ -385,7 +384,7 @@ def display_messages(button_layout: QGridLayout, web_view: QWebEngineView, messa
         button_layout.addWidget(label)
         return
     
-    # Buscar estructura: messages_log/tab_folder/subtab_folder/messages_latest.html
+    # Buscar estructura: messages_log/tab_folder/ o messages_log/tab_folder/subtab_folder/
     locations = []
     
     for tab_folder in os.listdir(messages_dir):
@@ -400,6 +399,16 @@ def display_messages(button_layout: QGridLayout, web_view: QWebEngineView, messa
             tab_name = tab_name.replace("_", " ")
         except:
             tab_name = tab_folder
+        
+        # Verificar si hay messages_latest.html directamente en la carpeta del tab
+        latest_file_direct = os.path.join(tab_path, "messages_latest.html")
+        if os.path.exists(latest_file_direct):
+            locations.append({
+                "tab_name": tab_name,
+                "subtab_name": tab_name,  # Si no hay subtab, usar el mismo nombre del tab
+                "latest_file": latest_file_direct
+            })
+            continue  # No buscar subcarpetas si ya encontró el archivo directo
         
         # Buscar subcarpetas
         for subtab_folder in os.listdir(tab_path):
@@ -438,7 +447,11 @@ def display_messages(button_layout: QGridLayout, web_view: QWebEngineView, messa
     max_cols = 3
     
     for location in locations:
-        btn = QPushButton(f"📁 {location['tab_name']}\n→ {location['subtab_name']}")
+        if location['subtab_name'] == location['tab_name']:
+            text = f"📁 {location['tab_name']}"
+        else:
+            text = f"📁 {location['tab_name']}\n→ {location['subtab_name']}"
+        btn = QPushButton(text)
         btn.setStyleSheet("""
             QPushButton {
                 background-color: #111;
@@ -486,11 +499,35 @@ def load_message_file(web_view: QWebEngineView, file_path: str):
             # Convertir ruta de archivo a URL
             file_url = QUrl.fromLocalFile(os.path.abspath(file_path))
             web_view.load(file_url)
-            print(f"[MESSAGES] ✓ Cargado: {file_path}")
+            #print(f"[MESSAGES] ✓ Cargado: {file_path}")
         else:
             web_view.setHtml(f"<p style='color: red;'>Archivo no encontrado: {file_path}</p>")
     except Exception as e:
         web_view.setHtml(f"<p style='color: red;'>Error: {str(e)}</p>")
+
+class FetchMessagesWorker(QObject):
+    """Worker para obtener mensajes en thread separado sin bloquear la UI"""
+    finished = pyqtSignal()
+    success = pyqtSignal(list)
+    error = pyqtSignal(str)
+    
+    def __init__(self, base_url):
+        super().__init__()
+        self.base_url = base_url
+    
+    def run(self):
+        """Obtiene mensajes en thread separado"""
+        try:
+            messages = fetch_messages(self.base_url)
+            if messages:
+                self.success.emit(messages)
+            else:
+                self.success.emit([])
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            self.finished.emit()
+
 
 def create_comms_tab(socket_url: str, main_window=None):
     """
@@ -580,39 +617,61 @@ def create_comms_tab(socket_url: str, main_window=None):
         
         # Ejecutar check_msg script
         try:
-            main_window.pages_views[0]['web'].page().runJavaScript(check_msg, handle_msg_check)
+            main_window.pages_views[3]['web'].page().runJavaScript(check_msg, handle_msg_check)
         except Exception as e:
             print(f"[COMMS] Error en check_msg: {e}")
     
     def refresh_messages():
-        """Obtiene mensajes y actualiza la UI"""
+        """Obtiene mensajes en thread separado y actualiza la UI"""
         try:
-            print("[COMMS] 🔄 Actualizando mensajes...")
-            messages = fetch_messages(main_window.base_url)
+            print("[COMMS] 🔄 Actualizando mensajes (en thread separado)...")
+            status_label.setText("⏳ Obteniendo mensajes...")
             
+            # Crear worker y thread
+            comms_tab.fetch_thread = QThread()
+            comms_tab.fetch_worker = FetchMessagesWorker(main_window.base_url)
+            comms_tab.fetch_worker.moveToThread(comms_tab.fetch_thread)
+            
+            # Conectar señales
+            comms_tab.fetch_thread.started.connect(comms_tab.fetch_worker.run)
+            comms_tab.fetch_worker.finished.connect(comms_tab.fetch_thread.quit)
+            comms_tab.fetch_worker.success.connect(lambda msgs: _on_messages_loaded(msgs))
+            comms_tab.fetch_worker.error.connect(lambda err: _on_messages_error(err))
+            
+            # Iniciar thread
+            comms_tab.fetch_thread.start()
+        
+        except Exception as e:
+            print(f"[COMMS] ❌ Error iniciando worker: {e}")
+            status_label.setText(f"❌ Error: {str(e)[:50]}")
+    
+    def _on_messages_loaded(messages):
+        """Callback cuando se obtienen los mensajes exitosamente"""
+        try:
             if messages:
+                comms_tab.msg_timer.setInterval(10000)
                 print(f"[COMMS] ✅ {len(messages)} mensaje(s) obtenido(s)")
                 save_messages_to_file(messages, "messages_log")
                 display_messages(button_grid, web_view, "messages_log")
                 status_label.setText(f"✓ {len(messages)} mensaje(s) cargado(s)")
             else:
+                comms_tab.msg_timer.setInterval(1000)
                 status_label.setText("✓ No hay mensajes nuevos")
-        
         except Exception as e:
-            print(f"[COMMS] ❌ Error actualizando: {e}")
+            print(f"[COMMS] ❌ Error procesando mensajes: {e}")
             status_label.setText(f"❌ Error: {str(e)[:50]}")
     
+    def _on_messages_error(error_msg):
+        """Callback cuando hay error obteniendo mensajes"""
+        print(f"[COMMS] ❌ Error: {error_msg}")
+        status_label.setText(f"❌ Error: {error_msg[:50]}")
+        comms_tab.msg_timer.setInterval(1000)  # Reintentar pronto
+    
     # ----- Timer de 1 segundo -----
-    msg_timer = QTimer()
-    msg_timer.setInterval(1000)
-    msg_timer.timeout.connect(check_for_new_messages)
-    msg_timer.start()
-    
-    # Guardar timer como atributo del widget para que no sea destruido por garbage collector
-    comms_tab.msg_timer = msg_timer
-    
-    # Carga inicial
-    QTimer.singleShot(1000, refresh_messages)
+    comms_tab.msg_timer = QTimer()
+    comms_tab.msg_timer.setInterval(1000)
+    comms_tab.msg_timer.timeout.connect(check_for_new_messages)
+    comms_tab.msg_timer.start()
     
     comms_tab.setLayout(layout)
     return comms_tab
