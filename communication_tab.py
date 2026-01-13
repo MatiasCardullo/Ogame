@@ -622,9 +622,23 @@ def create_comms_tab(socket_url: str, main_window=None):
             print(f"[COMMS] Error en check_msg: {e}")
     
     def refresh_messages():
-        """Obtiene mensajes en thread separado y actualiza la UI"""
+        """Obtiene mensajes en thread separado y actualiza la UI
+        Maneja casos donde el objeto QThread/worker fue destruido por Qt
+        para evitar 'wrapped C/C++ object of type QThread has been deleted'."""
         try:
-            print("[COMMS] 🔄 Actualizando mensajes (en thread separado)...")
+            # Si hay un thread vivo, no iniciar otro
+            existing_thread = getattr(comms_tab, 'fetch_thread', None)
+            if existing_thread is not None:
+                try:
+                    if existing_thread.isRunning():
+                        #print("[COMMS] ⏳ Ya hay una búsqueda en progreso, omitiendo...")
+                        return
+                except RuntimeError:
+                    # El objeto C++ fue eliminado; limpiar referencias para recrear
+                    comms_tab.fetch_thread = None
+                    comms_tab.fetch_worker = None
+
+            #print("[COMMS] 🔄 Actualizando mensajes (en thread separado)...")
             status_label.setText("⏳ Obteniendo mensajes...")
             
             # Crear worker y thread
@@ -635,12 +649,13 @@ def create_comms_tab(socket_url: str, main_window=None):
             # Conectar señales
             comms_tab.fetch_thread.started.connect(comms_tab.fetch_worker.run)
             comms_tab.fetch_worker.finished.connect(comms_tab.fetch_thread.quit)
-            comms_tab.fetch_worker.success.connect(lambda msgs: _on_messages_loaded(msgs))
-            comms_tab.fetch_worker.error.connect(lambda err: _on_messages_error(err))
-            
+            comms_tab.fetch_worker.finished.connect(comms_tab.fetch_worker.deleteLater)
+            comms_tab.fetch_thread.finished.connect(comms_tab.fetch_thread.deleteLater)
+            comms_tab.fetch_worker.success.connect(_on_messages_loaded)
+            comms_tab.fetch_worker.error.connect(_on_messages_error)
+
             # Iniciar thread
             comms_tab.fetch_thread.start()
-        
         except Exception as e:
             print(f"[COMMS] ❌ Error iniciando worker: {e}")
             status_label.setText(f"❌ Error: {str(e)[:50]}")

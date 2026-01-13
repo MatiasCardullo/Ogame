@@ -16,7 +16,6 @@ def close():
     print("\r                ")
     sys.exit(1)
 
-
 def load_ogame_session(profile_path):
     cj = browser_cookie3.chrome(
         cookie_file=f"{profile_path}/Cookies",
@@ -32,7 +31,6 @@ def load_ogame_session(profile_path):
         "Origin": "https://s163-ar.ogame.gameforge.com",
     })
     return session
-
 
 def ensure_logged_in(profile_name, galaxy=None, retry_wait=10):
     BASE_URL = "https://s163-ar.ogame.gameforge.com/game/index.php"
@@ -51,7 +49,6 @@ def ensure_logged_in(profile_name, galaxy=None, retry_wait=10):
             print(f"\r[GALAXY {galaxy}] Login...", end='', flush=True)
         time.sleep(retry_wait)
 
-
 def parse_systems_arg(arg):
     if arg.isdigit():
         s = int(arg)
@@ -63,6 +60,25 @@ def parse_systems_arg(arg):
             return range(int(a), int(b) + 1)
 
     raise ValueError(f"Sistemas inválidos: '{arg}'")
+
+def parse_mission_flags(available):
+    flags = {
+        1: "can_attack",
+        3: "can_transport",
+        4: "can_deploy",
+        5: "can_hold",
+        6: "can_espionage",
+        9: "can_destroy",
+    }
+
+    result = {v: 0 for v in flags.values()}
+
+    for m in available or []:
+        mt = m.get("missionType")
+        if mt in flags:
+            result[flags[mt]] = 1
+
+    return result
 
 
 # ─────────────────────────────
@@ -79,12 +95,8 @@ def init_db(db_path="galaxy.db"):
         galaxy INTEGER,
         system INTEGER,
         scanned_at REAL,
-        success INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS raw_response (
-        scan_id INTEGER PRIMARY KEY,
-        json TEXT
+        success INTEGER,
+        UNIQUE (galaxy, system)
     );
 
     CREATE TABLE IF NOT EXISTS players (
@@ -101,33 +113,80 @@ def init_db(db_path="galaxy.db"):
 
     CREATE TABLE IF NOT EXISTS planets (
         planet_id INTEGER PRIMARY KEY,
-        galaxy INTEGER,
-        system INTEGER,
-        position INTEGER,
-        type INTEGER,
         name TEXT,
         player_id INTEGER,
+        image TEXT,
+        destroyed INTEGER,
+        activity INTEGER,
+        scan_id INTEGER,
+        position INTEGER,
+        moon_id INTEGER,
+        can_attack INTEGER,
+        can_transport INTEGER,
+        can_deploy INTEGER,
+        can_hold INTEGER,
+        can_espionage INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS moons (
+        moon_id INTEGER PRIMARY KEY,
+        name TEXT,
         size INTEGER,
         image TEXT,
         destroyed INTEGER,
         activity INTEGER,
-        last_scan REAL
+        can_attack INTEGER,
+        can_transport INTEGER,
+        can_deploy INTEGER,
+        can_hold INTEGER,
+        can_espionage INTEGER,
+        can_destroy INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS debris (
-        galaxy INTEGER,
-        system INTEGER,
+        scan_id INTEGER,
         position INTEGER,
         metal INTEGER,
         crystal INTEGER,
         deuterium INTEGER,
         required_ships INTEGER,
-        last_scan REAL,
-        PRIMARY KEY (galaxy, system, position)
+        PRIMARY KEY (scan_id, position)
+    );
+                      
+    CREATE TABLE IF NOT EXISTS images (
+        image_name TEXT PRIMARY KEY,
+        image_src TEXT
+    );
+                      
+    CREATE TABLE IF NOT EXISTS missions (
+        missionType INTEGER PRIMARY KEY,
+        name TEXT,
+        link TEXT
     );
     """)
-
     conn.commit()
+
+    MISSIONS = [
+        (0, "Reubicar", "prepareMove"),
+        (1, "Atacar", "attack"),
+        (2, "Ataque conjunto", "unionAttack"),
+        (3, "Transportar", "transport"),
+        (4, "Desplegar", "deploy"),
+        (5, "Mantener posición", "hold"),
+        (6, "Espionaje", "espionage"),
+        (7, "Colonizar", "colonize"),
+        (8, "Recolectar", "recycle"),
+        (9, "Destruir", "destroy"),
+        (10, "Misil", "missileAttack"),
+        (15, "Expedicíon", "expedition"),
+        (18, "Forma de vida", "discovery")
+    ]
+
+    cur.executemany("""
+        INSERT OR IGNORE INTO missions (missionType, name, link)
+        VALUES (?, ?, ?)
+    """, MISSIONS)
+
     return conn
 
 
@@ -160,13 +219,16 @@ class GalaxyWorker:
         cur.execute("""
             INSERT INTO scans (galaxy, system, scanned_at, success)
             VALUES (?, ?, ?, 1)
+            ON CONFLICT(galaxy, system)
+            DO UPDATE SET
+                scanned_at = excluded.scanned_at,
+                success = 1
         """, (galaxy, system, now))
-        scan_id = cur.lastrowid
 
         cur.execute("""
-            INSERT INTO raw_response (scan_id, json)
-            VALUES (?, ?)
-        """, (scan_id, text))
+            SELECT id FROM scans WHERE galaxy = ? AND system = ?
+        """, (galaxy, system))
+        scan_id = cur.fetchone()[0]
 
         galaxy_content = data.get("system", {}).get("galaxyContent", [])
 
@@ -176,101 +238,135 @@ class GalaxyWorker:
                 continue
 
             player = row.get("player")
-            if player and "playerId" in player:
-                cur.execute("""
-                    INSERT OR IGNORE INTO players (
-                        player_id, name, alliance_id, alliance_tag,
-                        rank_position, is_active, is_inactive,
-                        is_vacation, is_banned
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    player["playerId"],
-                    player.get("playerName"),
-                    player.get("allianceId"),
-                    player.get("allianceTag"),
-                    player.get("highscorePositionPlayer"),
-                    int(player.get("isActive", False)),
-                    int(player.get("isInactive", False)),
-                    int(player.get("isOnVacation", False)),
-                    int(player.get("isBanned", False))
-                ))
+            if player:
+                pId = player.get("playerId", 0)
+                if pId != 99999:
+                    cur.execute("""
+                        INSERT OR IGNORE INTO players (
+                            player_id, name, alliance_id, alliance_tag,
+                            rank_position, is_active, is_inactive,
+                            is_vacation, is_banned
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        pId,
+                        player.get("playerName"),
+                        player.get("allianceId"),
+                        player.get("allianceTag"),
+                        player.get("highscorePositionPlayer"),
+                        int(player.get("isActive", False)),
+                        int(player.get("isInactive", False)),
+                        int(player.get("isOnVacation", False)),
+                        int(player.get("isBanned", False))
+                    ))
 
             planets = row.get("planets") or []
             if not isinstance(planets, list):
                 planets = [planets]
 
+            moon_id = None
             for body in planets:
                 if not isinstance(body, dict):
                     continue
 
                 ptype = body.get("planetType")
-
-                # PLANETA
+                missions = body.get("availableMissions", [])
+                flags = parse_mission_flags(missions)
+                # ── PLANETA
                 if ptype == 1:
                     self.PLANETS += 1
+                    image_name = body.get("imageInformation")
+                    image_src = body.get("imageSrc")
+                    if image_name and image_src:
+                        cur.execute("""
+                            INSERT OR IGNORE INTO images (image_name, image_src)
+                            VALUES (?, ?)
+                        """, (image_name, image_src))
                     cur.execute("""
                         INSERT OR REPLACE INTO planets (
-                            planet_id, galaxy, system, position, type,
-                            name, player_id, size, image,
-                            destroyed, activity, last_scan
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            planet_id, name, player_id,
+                            image, destroyed, activity,
+                            scan_id, position, moon_id,
+                            can_attack, can_transport,
+                            can_hold, can_espionage
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         body.get("planetId"),
-                        galaxy, system, pos, 1,
                         body.get("planetName"),
                         body.get("playerId"),
-                        None,
-                        body.get("imageInformation"),
+                        image_name,
                         int(body.get("isDestroyed", False)),
                         body.get("activity", {}).get("showActivity"),
-                        now
+                        scan_id,
+                        pos,
+                        None,
+                        flags["can_attack"],
+                        flags["can_transport"],
+                        flags["can_hold"],
+                        flags["can_espionage"]
                     ))
 
-                # ESCOMBROS
+                # ── LUNA
+                elif ptype == 3:
+                    self.MOONS += 1
+                    image_name = body.get("imageInformation")
+                    image_src = body.get("imageSrc")
+                    if image_name and image_src:
+                        cur.execute("""
+                            INSERT OR IGNORE INTO images (image_name, image_src)
+                            VALUES (?, ?)
+                        """, (image_name, image_src))
+                    moon_id = body.get("planetId")
+                    cur.execute("""
+                        INSERT OR REPLACE INTO moons (
+                            moon_id, name, size,
+                            image, destroyed, activity,
+                            can_attack, can_transport,
+                            can_hold, can_espionage,
+                            can_destroy
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        moon_id,
+                        body.get("planetName"),
+                        body.get("size"),
+                        image_name,
+                        int(body.get("isDestroyed", False)),
+                        body.get("activity", {}).get("showActivity"),
+                        flags["can_attack"],
+                        flags["can_transport"],
+                        flags["can_hold"],
+                        flags["can_espionage"],
+                        flags["can_destroy"]
+                    ))
+
+                # ── ESCOMBROS
                 elif ptype == 2:
                     self.DEBRIS += 1
                     res = body.get("resources", {})
                     m = int(res.get("metal", {}).get("amount", 0))
                     c = int(res.get("crystal", {}).get("amount", 0))
                     d = int(res.get("deuterium", {}).get("amount", 0))
-
                     self.METAL += m
                     self.CRYSTAL += c
                     self.DEUTERIUM += d
-
                     cur.execute("""
                         INSERT OR REPLACE INTO debris (
-                            galaxy, system, position,
+                            scan_id, position,
                             metal, crystal, deuterium,
-                            required_ships, last_scan
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            required_ships
+                        ) VALUES (?, ?, ?, ?, ?, ?)
                     """, (
-                        galaxy, system, pos,
+                        scan_id, pos,
                         m, c, d,
-                        body.get("requiredShips"),
-                        now
+                        body.get("requiredShips")
                     ))
-
-                # LUNA
-                elif ptype == 3:
-                    self.MOONS += 1
-                    cur.execute("""
-                        INSERT OR REPLACE INTO planets (
-                            planet_id, galaxy, system, position, type,
-                            name, player_id, size, image,
-                            destroyed, activity, last_scan
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        body.get("planetId"),
-                        galaxy, system, pos, 3,
-                        body.get("planetName"),
-                        body.get("playerId"),
-                        body.get("size"),
-                        body.get("imageInformation"),
-                        int(body.get("isDestroyed", False)),
-                        body.get("activity", {}).get("showActivity"),
-                        now
-                    ))
+            
+            # ── si hubo luna, vincularla al planeta del slot
+            if moon_id:
+                cur.execute("""
+                    UPDATE planets
+                    SET moon_id = ?
+                    WHERE scan_id = ? AND planet_id IS NOT NULL
+                """, (moon_id, scan_id))
 
         conn.commit()
         return True
@@ -289,10 +385,9 @@ class GalaxyWorker:
         conn = init_db("galaxy.db")
 
         size = os.get_terminal_size()
-        pbar = tqdm(self.systems, desc=f"G{self.galaxy} escaneando", unit="sistema")
-        status_one = tqdm(total=0, bar_format="{desc}", position=1)
-        status_two = tqdm(total=0, bar_format="{desc}", position=2)
-
+        pbar = tqdm(self.systems, desc=f"G{self.galaxy} escaneando", unit="sistem", ncols=size.columns-2)
+        status_one = tqdm(total=0, bar_format="{desc}", position=1, ncols=size.columns-2)
+        status_two = tqdm(total=0, bar_format="{desc}", position=2, ncols=size.columns-2)
         for s in pbar:
             payload = {"galaxy": self.galaxy, "system": s}
 
