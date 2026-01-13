@@ -1,8 +1,16 @@
+from pyparsing import col
 import os, random, time, json, requests, browser_cookie3, sys, traceback
 import sqlite3
 from tqdm import tqdm
 from text import cantidad
 
+TABLE_SCANS = [("id", 'INTEGER PRIMARY KEY AUTOINCREMENT'), ("galaxy", 'INTEGER'), ("system", 'INTEGER'), ("scanned_at", 'REAL'), ("success", 'INTEGER')]
+TABLE_PLAYERS = [("player_id", 'INTEGER PRIMARY KEY'), ("name", 'TEXT'), ("alliance_id", 'INTEGER'), ("alliance_tag", 'TEXT'), ("rank_position", 'INTEGER'), ("is_active", 'INTEGER'), ("is_inactive", 'INTEGER'), ("is_vacation", 'INTEGER'), ("is_banned", 'INTEGER')]
+TABLE_PLANETS = [("planet_id", 'INTEGER PRIMARY KEY'), ("name", 'TEXT'), ("player_id", 'INTEGER'), ("image", 'TEXT'), ("is_destroyed", 'INTEGER'), ("activity", 'INTEGER'), ("scan_id", 'INTEGER'), ("position", 'INTEGER'), ("moon_id", 'INTEGER'),
+                  ("can_attack", 'INTEGER'), ("can_transport", 'INTEGER'), ("can_deploy", 'INTEGER'), ("can_hold", 'INTEGER'), ("can_espionage", 'INTEGER')]
+TABLE_MOONS = [("moon_id", " INTEGER PRIMARY KEY"),("name"," TEXT"),("size"," INTEGER"),("image"," TEXT"),("is_destroyed"," INTEGER"),("activity"," INTEGER"),
+               ("can_attack"," INTEGER"),("can_transport"," INTEGER"),("can_deploy"," INTEGER"),("can_hold"," INTEGER"),("can_espionage"," INTEGER"),("can_destroy"," INTEGER")]
+TABLE_DEBRIS = [("scan_id", 'INTEGER'), ("position", 'INTEGER'), ("metal", 'INTEGER'), ("crystal", 'INTEGER'), ("deuterium", 'INTEGER'), ("required_ships", 'INTEGER')]
 
 # ─────────────────────────────
 # Utils
@@ -80,6 +88,11 @@ def parse_mission_flags(available):
 
     return result
 
+def sql_insert_values(table_cols):
+    return f" ({', '.join(col for col, _ in table_cols)}) VALUES ({', '.join(['?'] * len(table_cols))})"
+
+def sql_create(table):
+    return f" ({', '.join([f'{col} {type_}' for col, type_ in table])})"
 
 # ─────────────────────────────
 # DB
@@ -89,81 +102,15 @@ def init_db(db_path="galaxy.db"):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
-    cur.executescript("""
-    CREATE TABLE IF NOT EXISTS scans (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        galaxy INTEGER,
-        system INTEGER,
-        scanned_at REAL,
-        success INTEGER,
-        UNIQUE (galaxy, system)
-    );
-
-    CREATE TABLE IF NOT EXISTS players (
-        player_id INTEGER PRIMARY KEY,
-        name TEXT,
-        alliance_id INTEGER,
-        alliance_tag TEXT,
-        rank_position INTEGER,
-        is_active INTEGER,
-        is_inactive INTEGER,
-        is_vacation INTEGER,
-        is_banned INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS planets (
-        planet_id INTEGER PRIMARY KEY,
-        name TEXT,
-        player_id INTEGER,
-        image TEXT,
-        destroyed INTEGER,
-        activity INTEGER,
-        scan_id INTEGER,
-        position INTEGER,
-        moon_id INTEGER,
-        can_attack INTEGER,
-        can_transport INTEGER,
-        can_deploy INTEGER,
-        can_hold INTEGER,
-        can_espionage INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS moons (
-        moon_id INTEGER PRIMARY KEY,
-        name TEXT,
-        size INTEGER,
-        image TEXT,
-        destroyed INTEGER,
-        activity INTEGER,
-        can_attack INTEGER,
-        can_transport INTEGER,
-        can_deploy INTEGER,
-        can_hold INTEGER,
-        can_espionage INTEGER,
-        can_destroy INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS debris (
-        scan_id INTEGER,
-        position INTEGER,
-        metal INTEGER,
-        crystal INTEGER,
-        deuterium INTEGER,
-        required_ships INTEGER,
-        PRIMARY KEY (scan_id, position)
-    );
-                      
-    CREATE TABLE IF NOT EXISTS images (
-        image_name TEXT PRIMARY KEY,
-        image_src TEXT
-    );
-                      
-    CREATE TABLE IF NOT EXISTS missions (
-        missionType INTEGER PRIMARY KEY,
-        name TEXT,
-        link TEXT
-    );
-    """)
+    cur.executescript(
+        f"CREATE TABLE IF NOT EXISTS scans ({sql_create(TABLE_SCANS)} UNIQUE (galaxy, system));"
+        f"CREATE TABLE IF NOT EXISTS players ({sql_create(TABLE_PLAYERS)});"
+        f"CREATE TABLE IF NOT EXISTS planets ({sql_create(TABLE_PLANETS)});"
+        f"CREATE TABLE IF NOT EXISTS moons ({sql_create(TABLE_MOONS)});"
+        f"CREATE TABLE IF NOT EXISTS debris ({sql_create(TABLE_DEBRIS)}, PRIMARY KEY (scan_id, position));"
+        "CREATE TABLE IF NOT EXISTS images (image_name TEXT PRIMARY KEY, image_src TEXT);"       
+        "CREATE TABLE IF NOT EXISTS missions (missionType INTEGER PRIMARY KEY, name TEXT, link TEXT);"
+    )
     conn.commit()
 
     MISSIONS = [
@@ -207,6 +154,13 @@ class GalaxyWorker:
         self.DEUTERIUM = 0
 
     def parse_galaxy_response(self, text, conn, galaxy, system):
+        def image(name, src):
+            if name and src:
+                cur.execute("""
+                    INSERT OR IGNORE INTO images (image_name, image_src)
+                    VALUES (?, ?)
+                """, (name, src))
+        
         cur = conn.cursor()
         now = time.time()
 
@@ -241,13 +195,7 @@ class GalaxyWorker:
             if player:
                 pId = player.get("playerId", 0)
                 if pId != 99999:
-                    cur.execute("""
-                        INSERT OR IGNORE INTO players (
-                            player_id, name, alliance_id, alliance_tag,
-                            rank_position, is_active, is_inactive,
-                            is_vacation, is_banned
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
+                    cur.execute(f"INSERT OR REPLACE INTO players {sql_insert_values(TABLE_PLAYERS)}", (
                         pId,
                         player.get("playerName"),
                         player.get("allianceId"),
@@ -276,20 +224,8 @@ class GalaxyWorker:
                     self.PLANETS += 1
                     image_name = body.get("imageInformation")
                     image_src = body.get("imageSrc")
-                    if image_name and image_src:
-                        cur.execute("""
-                            INSERT OR IGNORE INTO images (image_name, image_src)
-                            VALUES (?, ?)
-                        """, (image_name, image_src))
-                    cur.execute("""
-                        INSERT OR REPLACE INTO planets (
-                            planet_id, name, player_id,
-                            image, destroyed, activity,
-                            scan_id, position, moon_id,
-                            can_attack, can_transport,
-                            can_hold, can_espionage
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
+                    image(image_name, image_src)
+                    cur.execute(f"INSERT OR REPLACE INTO planets {sql_insert_values(TABLE_PLANETS)}", (
                         body.get("planetId"),
                         body.get("planetName"),
                         body.get("playerId"),
@@ -310,11 +246,7 @@ class GalaxyWorker:
                     self.MOONS += 1
                     image_name = body.get("imageInformation")
                     image_src = body.get("imageSrc")
-                    if image_name and image_src:
-                        cur.execute("""
-                            INSERT OR IGNORE INTO images (image_name, image_src)
-                            VALUES (?, ?)
-                        """, (image_name, image_src))
+                    image(image_name, image_src)
                     moon_id = body.get("planetId")
                     cur.execute("""
                         INSERT OR REPLACE INTO moons (
@@ -348,13 +280,7 @@ class GalaxyWorker:
                     self.METAL += m
                     self.CRYSTAL += c
                     self.DEUTERIUM += d
-                    cur.execute("""
-                        INSERT OR REPLACE INTO debris (
-                            scan_id, position,
-                            metal, crystal, deuterium,
-                            required_ships
-                        ) VALUES (?, ?, ?, ?, ?, ?)
-                    """, (
+                    cur.execute(f"INSERT OR REPLACE INTO debris {sql_insert_values(TABLE_DEBRIS)}", (
                         scan_id, pos,
                         m, c, d,
                         body.get("requiredShips")
