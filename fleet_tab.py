@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QDateTimeEdit, QGridLayout
 )
 from PyQt6.QtCore import QDateTime, QThread, pyqtSignal, QObject
-from fleet_sender import send_scheduled_fleets
+from workers.fleet_sender import send_scheduled_fleets
 
 class FleetSendWorker(QObject):
     """Worker para enviar flotas programadas sin bloquear la UI"""

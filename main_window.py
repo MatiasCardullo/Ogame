@@ -27,7 +27,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, profile=None, url=None):
         super().__init__()
-        self.setWindowTitle("OGame — Main")
+        self.setWindowTitle("OGame")
 
         # Profile
         profile = profile or QWebEngineProfile("ogame_profile", self)
@@ -230,7 +230,7 @@ class MainWindow(QMainWindow):
 
         # ----- Tab Comunicaciones -----
         comunication_tab = create_comms_tab("https://TU-DOMINIO-O-NGROK:3000",self)
-        self.tabs.addTab(comunication_tab, "Socket Control")
+        self.tabs.addTab(comunication_tab, "Comunicaciones")
 
         self.setCentralWidget(self.tabs)
 
@@ -409,7 +409,6 @@ class MainWindow(QMainWindow):
                 # Saltar la página Main (index 0)
                 if i == 0:
                     continue
-                
                 url = page_info['url']
                 web = page_info['web']
                 current_url = web.url().toString()
@@ -596,9 +595,13 @@ class MainWindow(QMainWindow):
                 print("[DEBUG] ✅ Datos de planetas cargados desde cache")
             
             # Timer para recargar las páginas secundarias después de on_open
-            QTimer.singleShot(5000, self.reload_other_pages_urls)
-
-        QTimer.singleShot(3000, lambda: self.login.page().runJavaScript(js, done))
+            QTimer.singleShot(3000, self.reload_other_pages_urls)
+        
+        url = self.pages_views[0]['web'].url().toString() 
+        if "loading" in url or self.pages_views[0]['url'] in url:
+            QTimer.singleShot(3000, self.reload_other_pages_urls)
+        else:
+            QTimer.singleShot(3000, lambda: self.login.page().runJavaScript(js, done))
 
     def load_other_planets(self):
         """Busca los enlaces de otros planetas en main_web y los carga secuencialmente."""

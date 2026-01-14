@@ -1,8 +1,6 @@
-from pyparsing import col
-import os, random, time, json, requests, browser_cookie3, sys, traceback
-import sqlite3
+import os, random, time, json, sys, traceback, queue, threading, string, keyboard
+import requests, browser_cookie3, sqlite3
 from tqdm import tqdm
-from text import cantidad
 
 TABLE_SCANS = [("id", 'INTEGER PRIMARY KEY AUTOINCREMENT'), ("galaxy", 'INTEGER'), ("system", 'INTEGER'), ("scanned_at", 'REAL'), ("success", 'INTEGER')]
 TABLE_PLAYERS = [("player_id", 'INTEGER PRIMARY KEY'), ("name", 'TEXT'), ("alliance_id", 'INTEGER'), ("alliance_tag", 'TEXT'), ("rank_position", 'INTEGER'), ("is_active", 'INTEGER'), ("is_inactive", 'INTEGER'), ("is_vacation", 'INTEGER'), ("is_banned", 'INTEGER')]
@@ -15,6 +13,16 @@ TABLE_DEBRIS = [("scan_id", 'INTEGER'), ("position", 'INTEGER'), ("metal", 'INTE
 # ─────────────────────────────
 # Utils
 # ─────────────────────────────
+
+def getch():
+    alphabet = list(string.ascii_lowercase)
+    while True:
+        for letter in alphabet: # detect when a letter is pressed
+            if keyboard.is_pressed(letter):
+                return letter
+        for num in range(10): # detect numbers 0-9
+            if keyboard.is_pressed(str(num)):
+                return str(num)
 
 def close():
     print("\nCerrando en    ", end='')
@@ -92,7 +100,7 @@ def sql_insert_values(table_cols):
     return f" ({', '.join(col for col, _ in table_cols)}) VALUES ({', '.join(['?'] * len(table_cols))})"
 
 def sql_create(table):
-    return f" ({', '.join([f'{col} {type_}' for col, type_ in table])})"
+    return f"{', '.join([f'{col} {type_}' for col, type_ in table])}"
 
 # ─────────────────────────────
 # DB
@@ -103,12 +111,12 @@ def init_db(db_path="galaxy.db"):
     cur = conn.cursor()
 
     cur.executescript(
-        f"CREATE TABLE IF NOT EXISTS scans ({sql_create(TABLE_SCANS)} UNIQUE (galaxy, system));"
-        f"CREATE TABLE IF NOT EXISTS players ({sql_create(TABLE_PLAYERS)});"
-        f"CREATE TABLE IF NOT EXISTS planets ({sql_create(TABLE_PLANETS)});"
-        f"CREATE TABLE IF NOT EXISTS moons ({sql_create(TABLE_MOONS)});"
-        f"CREATE TABLE IF NOT EXISTS debris ({sql_create(TABLE_DEBRIS)}, PRIMARY KEY (scan_id, position));"
-        "CREATE TABLE IF NOT EXISTS images (image_name TEXT PRIMARY KEY, image_src TEXT);"       
+        f"CREATE TABLE IF NOT EXISTS scans ({sql_create(TABLE_SCANS)}, UNIQUE (galaxy, system));" +
+        f"CREATE TABLE IF NOT EXISTS players ({sql_create(TABLE_PLAYERS)});" +
+        f"CREATE TABLE IF NOT EXISTS planets ({sql_create(TABLE_PLANETS)});" +
+        f"CREATE TABLE IF NOT EXISTS moons ({sql_create(TABLE_MOONS)});" +
+        f"CREATE TABLE IF NOT EXISTS debris ({sql_create(TABLE_DEBRIS)}, PRIMARY KEY (scan_id, position));" +
+        "CREATE TABLE IF NOT EXISTS images (image_name TEXT PRIMARY KEY, image_src TEXT);" +
         "CREATE TABLE IF NOT EXISTS missions (missionType INTEGER PRIMARY KEY, name TEXT, link TEXT);"
     )
     conn.commit()
@@ -136,7 +144,6 @@ def init_db(db_path="galaxy.db"):
 
     return conn
 
-
 # ─────────────────────────────
 # Galaxy Worker
 # ─────────────────────────────
@@ -153,7 +160,67 @@ class GalaxyWorker:
         self.CRYSTAL = 0
         self.DEUTERIUM = 0
 
-    def parse_galaxy_response(self, text, conn, galaxy, system):
+    def worker_thread(self, tid, systems_q, pbar, lock):
+        session = ensure_logged_in("..\profile_data", self.galaxy)
+        conn = init_db("galaxy.db")
+
+        status = tqdm(
+            total=0,
+            position=tid + 1,
+            bar_format="{desc}",
+            leave=True
+        )
+
+        BASE_URL = "https://s163-ar.ogame.gameforge.com/game/index.php"
+        PARAMS = {
+            "page": "ingame",
+            "component": "galaxy",
+            "action": "fetchGalaxyContent",
+            "ajax": "1",
+            "asJson": "1"
+        }
+
+        while True:
+            try:
+                system = systems_q.get_nowait()
+            except queue.Empty:
+                break
+
+            start = time.perf_counter()
+            try:
+                r = session.post(
+                    BASE_URL,
+                    params=PARAMS,
+                    data={"galaxy": self.galaxy, "system": system},
+                    timeout=10
+                )
+
+                ok, session_cookie = self.parse_galaxy_response(r, conn, self.galaxy, system)
+                if not ok:
+                    session = ensure_logged_in("..\profile_data", self.galaxy)
+                # Actualizar la cookie de sesión si se recibió una nueva
+                if session_cookie:
+                    session.cookies.set("prsess_100170", session_cookie)
+
+            except Exception as e:
+                tqdm.write(f"[ERROR][T{tid}] {self.galaxy}:{system} {e}")
+
+            elapsed = time.perf_counter() - start
+
+            status.set_description_str(
+                f"T{tid} | Sistema {system} | {elapsed:.2f}s"
+            )
+
+            with lock:
+                pbar.update(1)
+
+            systems_q.task_done()
+            #time.sleep(random.random())
+
+        conn.close()
+        status.close()
+
+    def parse_galaxy_response(self, response, conn, galaxy, system):
         def image(name, src):
             if name and src:
                 cur.execute("""
@@ -161,12 +228,18 @@ class GalaxyWorker:
                     VALUES (?, ?)
                 """, (name, src))
         
+        # Extraer cookie de sesión de la respuesta si existe
+        session_cookie = None
+        if response:
+            if "prsess_100170" in response.cookies:
+                session_cookie = response.cookies["prsess_100170"]
+        
         cur = conn.cursor()
         now = time.time()
 
-        text = text.strip()
+        text = response.text.strip()
         if not text.startswith("{"):
-            return False
+            return False, None
 
         data = json.loads(text)
 
@@ -237,6 +310,7 @@ class GalaxyWorker:
                         None,
                         flags["can_attack"],
                         flags["can_transport"],
+                        flags["can_deploy"],
                         flags["can_hold"],
                         flags["can_espionage"]
                     ))
@@ -248,15 +322,7 @@ class GalaxyWorker:
                     image_src = body.get("imageSrc")
                     image(image_name, image_src)
                     moon_id = body.get("planetId")
-                    cur.execute("""
-                        INSERT OR REPLACE INTO moons (
-                            moon_id, name, size,
-                            image, destroyed, activity,
-                            can_attack, can_transport,
-                            can_hold, can_espionage,
-                            can_destroy
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
+                    cur.execute(f"INSERT OR REPLACE INTO moons {sql_insert_values(TABLE_MOONS)}", (
                         moon_id,
                         body.get("planetName"),
                         body.get("size"),
@@ -265,6 +331,7 @@ class GalaxyWorker:
                         body.get("activity", {}).get("showActivity"),
                         flags["can_attack"],
                         flags["can_transport"],
+                        flags["can_deploy"],
                         flags["can_hold"],
                         flags["can_espionage"],
                         flags["can_destroy"]
@@ -295,52 +362,40 @@ class GalaxyWorker:
                 """, (moon_id, scan_id))
 
         conn.commit()
-        return True
+        return True, session_cookie
 
-    def run(self):
-        BASE_URL = "https://s163-ar.ogame.gameforge.com/game/index.php"
-        PARAMS = {
-            "page": "ingame",
-            "component": "galaxy",
-            "action": "fetchGalaxyContent",
-            "ajax": "1",
-            "asJson": "1"
-        }
-
-        session = ensure_logged_in("profile_data", self.galaxy)
-        conn = init_db("galaxy.db")
+    def run(self, threads=3):
+        systems_q = queue.Queue()
+        for s in self.systems:
+            systems_q.put(s)
 
         size = os.get_terminal_size()
-        pbar = tqdm(self.systems, desc=f"G{self.galaxy} escaneando", unit="sistem", ncols=size.columns-2)
-        status_one = tqdm(total=0, bar_format="{desc}", position=1, ncols=size.columns-2)
-        status_two = tqdm(total=0, bar_format="{desc}", position=2, ncols=size.columns-2)
-        for s in pbar:
-            payload = {"galaxy": self.galaxy, "system": s}
+        total = systems_q.qsize()
 
-            try:
-                r = session.post(BASE_URL, params=PARAMS, data=payload, timeout=10)
-                ok = self.parse_galaxy_response(r.text, conn, self.galaxy, s)
+        pbar = tqdm(
+            total=total,
+            desc=f"G{self.galaxy} escaneando",
+            unit="sistem",
+            ncols=size.columns - 2,
+            position=0
+        )
 
-                if not ok:
-                    session = ensure_logged_in("profile_data", self.galaxy)
-                    continue
+        lock = threading.Lock()
+        workers = []
 
-                status_one.set_description_str(
-                    f"Sistema {s} | Planetas {self.PLANETS} | Lunas {self.MOONS}"
-                )
-                status_two.set_description_str(
-                    f"Escombros {self.DEBRIS} "
-                    f"M={cantidad(self.METAL)} "
-                    f"C={cantidad(self.CRYSTAL)} "
-                    f"D={cantidad(self.DEUTERIUM)}"
-                )
+        for tid in range(threads):
+            t = threading.Thread(
+                target=self.worker_thread,
+                args=(tid, systems_q, pbar, lock),
+                daemon=True
+            )
+            t.start()
+            workers.append(t)
 
-                time.sleep(random.random())
+        for t in workers:
+            t.join()
 
-            except Exception as e:
-                tqdm.write(f"[ERROR] {self.galaxy}:{s} {e}")
-
-        conn.close()
+        pbar.close()
 
 
 # ─────────────────────────────
@@ -353,7 +408,15 @@ if __name__ == "__main__":
         print("  python galaxy_worker.py <galaxia>")
         print("  python galaxy_worker.py <galaxia> <sistema>")
         print("  python galaxy_worker.py <galaxia> <inicio-fin>")
-        sys.exit(1)
+        print("Want to scan all galaxies? Y/N")
+        answer = getch()
+        if answer.lower() == "y":
+            for galaxy in range(1, 6):
+                worker = GalaxyWorker(galaxy, None)
+                threads = min(3, os.cpu_count())
+                worker.run(threads=threads)
+        else:
+            sys.exit(1)
 
     try:
         galaxy = int(sys.argv[1])
@@ -363,7 +426,8 @@ if __name__ == "__main__":
             systems = parse_systems_arg(sys.argv[2])
 
         worker = GalaxyWorker(galaxy, systems)
-        worker.run()
+        threads = min(3, os.cpu_count())
+        worker.run(threads=threads)
         close()
 
     except Exception as e:

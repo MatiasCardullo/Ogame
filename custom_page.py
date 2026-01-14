@@ -37,26 +37,29 @@ class CustomWebPage(QWebEnginePage):
             if self.main_window is not None:
                 try:
                     self.main_window.popups.append(popup)
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    print(f"[DEBUG] Error agregando popup a lista: {e}")
+            
+            print(f"[DEBUG] Popup creado para: {current_url}")
             return popup.web.page()
-        
-        # Por defecto, cargar en main_web si existe
-        if self.main_window and hasattr(self.main_window, 'main_web'):
-            return self.main_window.main_web.page()
-        
-        # Fallback: crear popup si no existe main_web
-        popup = PopupWindow(profile=self.profile(), main_window=self.main_window)
-        popup.show()
-
-        if self.main_window is not None:
-            try:
-                self.main_window.popups.append(popup)
-            except Exception:
-                pass
-
-        return popup.web.page()
+        else:
+            # Cargar en main_web si es OGame
+            if self.main_window and hasattr(self.main_window, 'main_web') and self.main_window.main_web:
+                print(f"[DEBUG] Cargando en main_web: {current_url}")
+                return self.main_window.pages_views[0]['web'].page()
+            else:
+                # Fallback: crear popup
+                popup = PopupWindow(profile=self.profile(), main_window=self.main_window)
+                popup.show()
+                
+                if self.main_window is not None:
+                    try:
+                        self.main_window.popups.append(popup)
+                    except Exception:
+                        pass
+                
+                print(f"[DEBUG] Popup creado (fallback): {current_url}")
+                return popup.web.page()
 
     def _should_create_popup(self, url: str) -> bool:
         """
@@ -74,15 +77,9 @@ class CustomWebPage(QWebEnginePage):
         # ========== CASOS DE LOGIN ==========
         if "lobby.ogame.gameforge.com" in url_lower:
             # URL estándar de login = cargar en main_web
-            if "/accounts" or "/hub" in url_lower:
+            if "/accounts" in url_lower or "/hub" in url_lower:
                 return False  # Usar main_web para login estándar
             else:
                 return True
-        
-        # ========== VENTANAS EMERGENTES EXTERNAS ==========
-        # Si no es OGame ni Gameforge, probablemente sea servicio externo (Google, etc)
-        if "ogame" not in url_lower and "gameforge" not in url_lower:
+        else:
             return True  # Popup para servicios externos
-        
-        # Por defecto, usar main_web (navegación normal dentro del juego)
-        return False
