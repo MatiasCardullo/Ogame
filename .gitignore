@@ -7,3 +7,6 @@
 *.har
 *.log
 /.github
+*.db
+*.pyc
+*.csv

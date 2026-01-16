@@ -12,9 +12,9 @@ def barra_html(cant, cap, color, size = 20):
     except:
         return ""
 
-def tiempo_lleno(cant, cap, prod):
+def storage_time(cant, cap, prod):
     try:
-        if prod <= 0:
+        if prod < 0:
             t = cant / (prod*-1 * 3600)
         else:
             t = (cap - cant) / (prod * 3600)
@@ -58,21 +58,20 @@ def time_str(t, seconds = True):
     
 def production(prod):
     if abs(prod) > 1:
-        prod_t = f"{int(prod)}/s"
+        prod_t = f"{prod:.3g}/s"
     elif abs(prod) > 1/60:
-        prod_t = f"{int(prod*60)}/m"
+        prod_t = f"{60*prod:.3g}/m"
     else:
-        prod_t = f"{int(prod*3600)}/h"
+        prod_t = f"{3600*prod:.3g}/h"
     return prod_t
 
 def cantidad(cant):
-    if cant > 1000000:
-        cant_t = f"{(cant/1000000):.3g}M"
-    elif cant > 1000:
-        cant_t = f"{(cant/1000):.3g}k"
-    else:
-        cant_t = f"{int(cant)}"
-    return cant_t
+    if cant > 0:
+        if cant > 1000000:
+            return f"{(cant/1000000):.3g}M"
+        elif cant > 1000:
+            return f"{(cant/1000):.3g}k"
+    return f"{int(cant)}"
 
 def progress_color(i = 0, p1 = 75, p2 = 95, color1 = "#0f0", color2 = "#ff0", color3 = "#f00"):
     return color1 if i < p1 else color2 if i < p2 else color3
@@ -107,12 +106,14 @@ def format_research_queue_entry(entry, now, seconds):
     barra = barra_html(progress, 1, color, 50)
     return f"{barra} {name} [{progress:.2%}] ({time_str(remaining, seconds)})"
 
-def planet_production_entry(cant, cap, prodInt, color = "#fff"):
-    if cant < cap or prodInt < 0:
-        if prodInt > 0:
-            full = f"({production(prodInt)}) lleno en {tiempo_lleno(cant, cap, prodInt)}"
+def planet_production_entry(cant, cap, prod, color = "#fff"):
+    if cant < cap or prod < 0:
+        if prod > 0:
+            full = f"({production(prod)}) lleno en {storage_time(cant, cap, prod)}"
+        elif prod < 0:
+            full = f"({production(prod)}) vacio en {storage_time(cant, cap, prod)}"
         else:
-            full = f"({production(prodInt)}) vacio en {tiempo_lleno(cant, cap, prodInt)}"
+            full = f" - produccion detenida"
     else:
         full = f" - almacenes llenos!!!"
     char = progress_color((cant / cap) * 100)

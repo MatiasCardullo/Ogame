@@ -25,11 +25,12 @@ def getch():
                 return str(num)
 
 def close():
-    print("\nCerrando en    ", end='')
-    for i in range(5, 0, -1):
-        print(f"\b\b{i} ", end='', flush=True)
+    print("\r                                         ")
+    print("Cerrando en 10", end='', flush=True)
+    for i in range(9, -1, -1):
         time.sleep(1)
-    print("\r                ")
+        print(f"\b\b {i}", end='', flush=True)
+    print("\r                 \r\r", end='')
     sys.exit(1)
 
 def load_ogame_session(profile_path):
@@ -56,13 +57,13 @@ def ensure_logged_in(profile_name, galaxy=None, retry_wait=10):
             r = session.get(f"{BASE_URL}?page=ingame&component=galaxy", timeout=10)
             if "component=galaxy" in r.text:
                 if galaxy is not None:
-                    print(f"\r[GALAXY {galaxy}] Logged          ")
+                    print(f"\r\r[GALAXY {galaxy}] Logged   ", end='')
                 return session
         except Exception as e:
             print(f"\n[LOGIN] Error: {e}")
 
         if galaxy is not None:
-            print(f"\r[GALAXY {galaxy}] Login...", end='', flush=True)
+            print(f"\r[GALAXY {galaxy}] Login...", end='')
         time.sleep(retry_wait)
 
 def parse_systems_arg(arg):

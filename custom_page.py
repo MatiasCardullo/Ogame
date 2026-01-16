@@ -4,6 +4,8 @@ from PyQt6.QtCore import QUrl
 
 class CustomWebPage(QWebEnginePage):
     """Maneja popups del navegador (Google login, universo, etc.)"""
+    def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
+        pass  # No hacer nada = no imprimir mensajes
 
     def __init__(self, profile, parent=None, main_window=None):
         super().__init__(profile, parent)
