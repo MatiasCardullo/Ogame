@@ -33,10 +33,11 @@ def close():
     print("\r                 \r\r", end='')
     sys.exit(1)
 
-def load_ogame_session(profile_path):
+def load_ogame_session(profile_path, server):
+    base_url = "ogame.gameforge.com"
     cj = browser_cookie3.chrome(
         cookie_file=f"{profile_path}/Cookies",
-        domain_name="ogame.gameforge.com"
+        domain_name=base_url
     )
     session = requests.Session()
     session.cookies.update(cj)
@@ -44,26 +45,24 @@ def load_ogame_session(profile_path):
         "X-Requested-With": "XMLHttpRequest",
         "Accept": "application/json, text/javascript, */*; q=0.01",
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "Referer": "https://s163-ar.ogame.gameforge.com/game/index.php?page=ingame&component=galaxy",
-        "Origin": "https://s163-ar.ogame.gameforge.com",
+        "Referer": f"https://{server}.{base_url}/game/index.php?page=ingame&component=galaxy",
+        "Origin": "https://{server}.{base_url}",
     })
     return session
 
-def ensure_logged_in(profile_name, galaxy=None, retry_wait=10):
-    BASE_URL = "https://s163-ar.ogame.gameforge.com/game/index.php"
+def ensure_logged_in(profile_name, server, retry_wait=10):
+    BASE_URL = f"https://{server}.ogame.gameforge.com/game/index.php"
     while True:
-        session = load_ogame_session(profile_name)
+        session = load_ogame_session(profile_name, server)
         try:
             r = session.get(f"{BASE_URL}?page=ingame&component=galaxy", timeout=10)
-            if "component=galaxy" in r.text:
-                if galaxy is not None:
-                    print(f"\r\r[GALAXY {galaxy}] Logged   ", end='')
+            if "page=ingame" in r.text:
+                print(f"\r Logged    ", end='')
                 return session
         except Exception as e:
             print(f"\n[LOGIN] Error: {e}")
 
-        if galaxy is not None:
-            print(f"\r[GALAXY {galaxy}] Login...", end='')
+        print(f"\r Login...", end='')
         time.sleep(retry_wait)
 
 def parse_systems_arg(arg):
@@ -162,7 +161,7 @@ class GalaxyWorker:
         self.DEUTERIUM = 0
 
     def worker_thread(self, tid, systems_q, pbar, lock):
-        session = ensure_logged_in("..\profile_data", self.galaxy)
+        session = ensure_logged_in("..\profile_data", "s163-ar")
         conn = init_db("galaxy.db")
 
         status = tqdm(
@@ -198,7 +197,7 @@ class GalaxyWorker:
 
                 ok, session_cookie = self.parse_galaxy_response(r, conn, self.galaxy, system)
                 if not ok:
-                    session = ensure_logged_in("..\profile_data", self.galaxy)
+                    session = ensure_logged_in("..\profile_data", "s163-ar")
                 # Actualizar la cookie de sesión si se recibió una nueva
                 if session_cookie:
                     session.cookies.set("prsess_100170", session_cookie)

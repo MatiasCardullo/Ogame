@@ -465,7 +465,6 @@ def handle_main_web_queues(self, data, resources):
                 planet_for_store = planet_name
                 coords_for_store = coords
             
-            print(key_raw)
             qid = hashlib.sha1(key_raw.encode("utf-8")).hexdigest()
             
             # Guardar en memory

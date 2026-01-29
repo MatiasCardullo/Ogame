@@ -36,12 +36,9 @@ def get_ajax_token(session) -> Optional[str]:
     
     # Retornar token en cache si es válido
     if _is_token_valid():
-        #print(f"[FLEET] ✅ Usando token en cache")
         return _token_cache["token"]
     
-    try:
-        print(f"[FLEET] 🔄 Obteniendo nuevo token AJAX...")
-        
+    try:        
         # Llamar a eventList que siempre retorna un token
         url = "https://s163-ar.ogame.gameforge.com/game/index.php?page=componentOnly&component=eventList&ajax=1&asJson=1"
         
@@ -59,7 +56,6 @@ def get_ajax_token(session) -> Optional[str]:
                 token = data["newAjaxToken"]
                 _token_cache["token"] = token
                 _token_cache["timestamp"] = datetime.now()
-                print(f"[FLEET] ✅ Token AJAX obtenido de JSON: {token[:16]}...")
                 return token
         except json.JSONDecodeError:
             pass
@@ -80,7 +76,6 @@ def update_token_from_response(response_data: dict):
         token = response_data["newAjaxToken"]
         _token_cache["token"] = token
         _token_cache["timestamp"] = datetime.now()
-        print(f"[FLEET] 🔄 Token actualizado desde respuesta: {token[:16]}...")
 
 def send_fleet(fleet_data, profile_path="profile_data"):
     """
@@ -118,8 +113,7 @@ def send_fleet(fleet_data, profile_path="profile_data"):
     
     try:
         # Cargar sesión del navegador Chrome
-        print(f"[FLEET] Cargando sesión desde {profile_path}...")
-        session = load_ogame_session(profile_path)
+        session = load_ogame_session(profile_path, "s163-ar")
         
         # Obtener token AJAX (es CRÍTICO para el envío)
         ajax_token = get_ajax_token(session)

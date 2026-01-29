@@ -36,7 +36,7 @@ def fetch_messages(base_url, profile_path="profile_data"):
     Retorna array de messages con {title, content, time, tab_id, subtab_id, tab_name, subtab_name}
     """
     try:
-        session = load_ogame_session(profile_path)
+        session = load_ogame_session(profile_path, "s163-ar")
         
         # PASO 1: Obtener tabs principales y sus contadores de mensajes
         #print("[MESSAGES] Paso 1: Obteniendo tabs principales...")

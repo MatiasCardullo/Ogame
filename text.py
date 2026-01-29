@@ -14,16 +14,19 @@ def barra_html(cant, cap, color, size = 20):
 
 def storage_time(cant, cap, prod):
     try:
+        hora = 3600 #segundos
         if prod < 0:
-            t = cant / (prod*-1 * 3600)
+            t = cant / (prod*-1 * hora)
         else:
-            t = (cap - cant) / (prod * 3600)
+            t = (cap - cant) / (prod * hora)
         if t < 1.6:
             return f"{int(t*60)} minutos"
-        elif t > 72:
+        elif t < 72:
+            return f"{int(t)} horas"
+        elif t < 2160:
             return f"{int(t/24)} dias"
         else:
-            return f"{int(t)} horas"
+            return f"{int(t/732)} meses"
     except:
         return "—"
 
