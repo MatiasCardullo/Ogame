@@ -8,8 +8,8 @@ from PyQt6.QtCore import QUrl, QTimer
 from PyQt6.QtGui import QIcon
 from custom_page import CustomWebPage
 from debris_tab import create_debris_tab
-from fleet_tab import _refresh_scheduled_fleets_list, auto_send_scheduled_fleets, create_fleets_tab, save_scheduled_fleets, update_fleet_origin_combo
-from panel import handle_main_web_resources, refresh_resources_panel
+from fleet_tab import _refresh_scheduled_fleets_list, auto_send_scheduled_fleets, create_fleets_tab, handle_fleets_data, load_scheduled_fleets, on_fleets_page_loaded, save_scheduled_fleets, update_fleet_origin_combo, update_fleets_from_page
+from panel import check_queues, handle_main_web_resources, increment_all_planets, refresh_resources_panel, setup_main_web_extraction
 from communication_tab import create_comms_tab
 from sprite_widget import SpriteWidget
 import time, os, json
@@ -94,7 +94,7 @@ class MainWindow(QMainWindow):
             
             # Conectar extracción de flotas si es la página de Flotas (index 1)
             if i == 1:
-                web.loadFinished.connect(lambda: self.on_fleets_page_loaded())
+                web.loadFinished.connect(lambda: on_fleets_page_loaded(self))
             # Conectar extracción de subasta
             if i == 3:
                 web.loadFinished.connect(lambda: self.on_auction_page_loaded())
@@ -177,7 +177,7 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(side_bar)
 
         # Configurar extracción de datos en main_web (only for Main tab)
-        self.setup_main_web_extraction()
+        setup_main_web_extraction(self)
         
         top_container.setLayout(top_layout)
         main_layout.addWidget(top_container)
@@ -249,11 +249,11 @@ class MainWindow(QMainWindow):
         # Timers
         self.timer_global = QTimer(self)
         self.timer_global.setInterval(1000)
-        self.timer_global.timeout.connect(self.increment_all_planets)
+        self.timer_global.timeout.connect(lambda: increment_all_planets(self))
         self.timer_global.start()
         self.queue_timer = QTimer(self)
         self.queue_timer.setInterval(1000)
-        self.queue_timer.timeout.connect(self.check_queues)
+        self.queue_timer.timeout.connect(lambda: check_queues(self))
         self.queue_timer.start()
 
         self.fleet_sender_timer = QTimer(self)
@@ -264,7 +264,7 @@ class MainWindow(QMainWindow):
         # Timer para actualizar flotas desde pages_views[1]
         self.fleets_update_timer = QTimer(self)
         self.fleets_update_timer.setInterval(60000)  # Cada 1 minuto
-        self.fleets_update_timer.timeout.connect(self.update_fleets_from_page)
+        self.fleets_update_timer.timeout.connect(lambda: update_fleets_from_page(self))
         self.fleets_update_timer.start()
 
         self.notified_queues = set()
@@ -289,22 +289,9 @@ class MainWindow(QMainWindow):
         
         # Envíos programados de naves
         self.scheduled_fleets = []
-        self.load_scheduled_fleets()
+        load_scheduled_fleets(self)
         
         self.showMaximized()
-        
-    def load_scheduled_fleets(self):
-        """Carga las misiones programadas desde un archivo JSON"""
-        try:
-            if os.path.exists("scheduled_fleets.json"):
-                with open("scheduled_fleets.json", "r", encoding="utf-8") as f:
-                    self.scheduled_fleets = json.load(f)
-                    print(f"✅ Cargadas {len(self.scheduled_fleets)} misiones programadas")
-                    # Actualizar lista visual después de cargar
-                    if hasattr(self, 'fleet_scheduled_list'):
-                        _refresh_scheduled_fleets_list(self)
-        except Exception as e:
-            print(f"⚠️ Error cargando misiones: {e}")
     
     def load_data(self):
         """Carga los datos de planetas e investigaciones desde JSON"""
@@ -431,30 +418,6 @@ class MainWindow(QMainWindow):
             print(f"[DEBUG] Intervalo de actualización cambiado a {new_interval}ms")
             self.refresh_main_panel()
 
-    def setup_main_web_extraction(self):
-        """Configura main_web para extraer datos automáticamente cuando carga una página."""
-        if not hasattr(self, 'main_web'):
-            return
-
-        # Ensure we don't attach multiple times
-        try:
-            self.main_web.loadFinished.disconnect(self.on_main_web_loaded)
-        except Exception:
-            pass
-
-        self.main_web.loadFinished.connect(self.on_main_web_loaded)
-
-        # Keep navbar and other controls in sync (they call self.main_web dynamically)
-
-    def on_main_web_loaded(self):
-        """Cuando main_web carga una página, extrae datos si estamos en el juego."""
-        def check_ingame(is_ingame):
-            if is_ingame:
-                # Extraer metadata
-                self.main_web.page().runJavaScript(extract_meta_script, self.handle_main_web_meta)
-        
-        self.main_web.page().runJavaScript(in_game, check_ingame)
-
     def save_html(self):
             def handle_html(html):
                 path, _ = QFileDialog.getSaveFileName(self, "Guardar HTML", "pagina.html", "Archivos HTML (*.html)")
@@ -510,46 +473,9 @@ class MainWindow(QMainWindow):
             self.main_web = clicked_web
             self.active_page_index = clicked_index
 
-            # Only attach extraction if switching to Main tab (index 0)
-            if clicked_index == 0:
-                self.setup_main_web_extraction()
-            else:
-                # Disconnect extraction from non-Main tabs
-                try:
-                    self.main_web.loadFinished.disconnect(self.on_main_web_loaded)
-                except Exception:
-                    pass
-
         except Exception as e:
             print('[DEBUG] on_tab_clicked error:', e)
     
-    def handle_main_web_meta(self, data):
-        """Maneja metadata del planeta en main_web."""
-        if not data:
-            print("main web - no data")
-            return
-
-        language = data.get('ogame-language', 'en')
-        player = data.get('ogame-player-name', '—')
-        universe_url = data.get('ogame-universe', '—')
-        universe = data.get('ogame-universe-name', '—')
-        coords = data.get('ogame-planet-coordinates', '0:0:0')
-        planet = data.get('ogame-planet-name', '—')
-        planet_id = data.get('ogame-planet-id', None)
-        planet_type = data.get('ogame-planet-type', None)
-        speed = data.get('ogame-universe-speed', '0')
-        speed_fleet_holding = data.get('ogame-universe-speed-fleet-holding', '0')
-        speed_fleet_peaceful = data.get('ogame-universe-speed-fleet-peaceful', '0')
-        speed_fleet_war = data.get('ogame-universe-speed-fleet-war', '0')
-
-        self.current_main_web_planet = planet
-        self.current_main_web_coords = coords
-        self.current_main_web_is_moon = planet_type == 'moon'
-        self.current_main_web_planet_id = planet_id
-
-        # Extraer recursos
-        self.main_web.page().runJavaScript(extract_resources_script, lambda data: handle_main_web_resources(self, data))
-
     def on_open(self):
         js = """
         (async function() {
@@ -747,11 +673,6 @@ class MainWindow(QMainWindow):
         # avanzar índice inmediatamente
         self.current_planet_index += 1
 
-    def on_fleets_page_loaded(self):
-        """Extrae información de flotas cuando carga pages_views[1]"""
-        fleets_web = self.pages_views[1]['web']
-        fleets_web.page().runJavaScript(extract_fleets_script, self.handle_fleets_data)
-
     def on_auction_page_loaded(self):
         """Extrae información de la subasta cuando carga pages_views[3]"""
         auction_web = self.pages_views[3]['web']
@@ -772,117 +693,12 @@ class MainWindow(QMainWindow):
 
         auction_web.page().runJavaScript(auction_listener, handle_auction_data)
 
-    def update_fleets_from_page(self):
-        """Actualiza fleets_data extrayendo datos de pages_views[1]"""
-        if not hasattr(self, 'pages_views') or len(self.pages_views) < 2:
-            return
-        
-        fleets_web = self.pages_views[1]['web']
-        fleets_web.page().runJavaScript(extract_fleets_script, self.handle_fleets_data)
-
-    def handle_fleets_data(self, data):
-        """Procesa y almacena los datos de flotas extraídos del HTML"""
-        if not data:
-            self.fleets_data = []
-            self.fleet_slots = {"current": 0, "max": 0}
-            self.exp_slots = {"current": 0, "max": 0}
-            return
-        
-        if isinstance(data, dict) and "fleets" in data:
-            self.fleets_data = data.get("fleets", [])
-            self.fleet_slots = data.get("fleetSlots", {"current": 0, "max": 0})
-            self.exp_slots = data.get("expSlots", {"current": 0, "max": 0})
-            #print(f"[FLEETS] ✅ Cargadas {len(self.fleets_data)} flotas desde pages_views[1]")
-            #print(f"[FLEETS] Slots - Flotas: {self.fleet_slots}, Expediciones: {self.exp_slots}")
-            # Actualizar timestamp
-            self.last_fleet_update = time.time()
-            try:
-                with open("fleets_data.json", "w", encoding="utf-8") as f:
-                    json.dump(self.fleets_data, f, indent=2, ensure_ascii=False)
-            except Exception as e:
-                print(f"⚠️ Error guardando misiones: {e}")
-        else:
-            print("[FLEETS] ⚠️  Formato de datos de flotas inválido")
-            self.fleets_data = []
-            self.fleet_slots = {"current": 0, "max": 0}
-            self.exp_slots = {"current": 0, "max": 0}
-
     # ====================================================================
     #  PANEL PRINCIPAL
     # ====================================================================
     def refresh_main_panel(self):
         """Actualiza la sección del panel de recursos"""
         refresh_resources_panel(self)
-
-    # ====================================================================
-    #  Incremento pasivo
-    # ====================================================================
-    def increment_all_planets(self):
-        if not self.planets_data:
-            return
-        now = time.time()
-
-        for planet_key, pdata in self.planets_data.items():
-            r = pdata["resources"]
-            elapsed = now - r.get("last_update", now)
-            if elapsed <= 0:
-                continue
-
-            r["last_update"] = now
-            r["metal"] += r.get("prod_metal", 0) * elapsed
-            r["crystal"] += r.get("prod_crystal", 0) * elapsed
-            r["deuterium"] += r.get("prod_deuterium", 0) * elapsed
-
-    # ====================================================================
-    #  CHECK QUEUES
-    # ====================================================================
-    def check_queues(self):
-        now = int(time.time())
-        active_ids = set()
-
-        for planet_key, pdata in self.planets_data.items():
-            coords = pdata.get("coords", "0:0:0")
-            planet_name = pdata.get("name", "")
-            for q in pdata.get("queues", []):
-                qid = q.get("id")
-                if not qid:
-                    continue
-                active_ids.add(qid)
-                end = int(q.get("end", now))
-                if end <= now and qid not in self.notified_queues:
-                    try:
-                        self.show_notification(
-                            "✅ Cola completada",
-                            f"{planet_name} ({coords}): {q.get('label','')} {q.get('name','')}"
-                        )
-                    except Exception as e:
-                        print("[DEBUG] Error al enviar notificación:", e)
-                    self.notified_queues.add(qid)
-
-        # Also consider global queues (researches)
-        for q in getattr(self, 'research_data', {}).values():
-            qid = q.get("id")
-            if not qid:
-                continue
-            active_ids.add(qid)
-            end = int(q.get("end", now))
-            if end <= now and qid not in self.notified_queues:
-                try:
-                    self.show_notification(
-                        "✅ Cola completada",
-                        f"{q.get('label','')} {q.get('name','')}"
-                    )
-                except Exception as e:
-                    print("[DEBUG] Error al enviar notificación:", e)
-                self.notified_queues.add(qid)
-
-        # Prune notified set
-        to_remove = [qid for qid in list(self.notified_queues) if qid not in active_ids]
-        for qid in to_remove:
-            try:
-                self.notified_queues.remove(qid)
-            except KeyError:
-                pass
 
     # ====================================================================
     #  NOTIFICACIONES

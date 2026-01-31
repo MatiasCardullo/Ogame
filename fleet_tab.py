@@ -1,3 +1,4 @@
+import os
 import json, time
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
@@ -7,6 +8,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QDateTime, QThread, pyqtSignal, QObject
 from workers.fleet_sender import send_scheduled_fleets
+from js_scripts import extract_fleets_script
 
 class FleetSendWorker(QObject):
     """Worker para enviar flotas programadas sin bloquear la UI"""
@@ -593,3 +595,56 @@ def save_scheduled_fleets(scheduled_fleets):
             print(f"✅ Guardadas {len(scheduled_fleets)} misiones programadas")
     except Exception as e:
         print(f"⚠️ Error guardando misiones: {e}")
+
+def load_scheduled_fleets(self):
+    """Carga las misiones programadas desde un archivo JSON"""
+    try:
+        if os.path.exists("scheduled_fleets.json"):
+            with open("scheduled_fleets.json", "r", encoding="utf-8") as f:
+                self.scheduled_fleets = json.load(f)
+                print(f"✅ Cargadas {len(self.scheduled_fleets)} misiones programadas")
+                # Actualizar lista visual después de cargar
+                if hasattr(self, 'fleet_scheduled_list'):
+                    _refresh_scheduled_fleets_list(self)
+    except Exception as e:
+        print(f"⚠️ Error cargando misiones: {e}")
+
+def on_fleets_page_loaded(self):
+    """Extrae información de flotas cuando carga pages_views[1]"""
+    fleets_web = self.pages_views[1]['web']
+    fleets_web.page().runJavaScript(extract_fleets_script, lambda data: handle_fleets_data(self, data))
+        
+def update_fleets_from_page(self):
+    """Actualiza fleets_data extrayendo datos de pages_views[1]"""
+    if not hasattr(self, 'pages_views') or len(self.pages_views) < 2:
+        return
+    
+    fleets_web = self.pages_views[1]['web']
+    fleets_web.page().runJavaScript(extract_fleets_script, lambda data: handle_fleets_data(self, data))
+
+def handle_fleets_data(self, data):
+    """Procesa y almacena los datos de flotas extraídos del HTML"""
+    if not data:
+        self.fleets_data = []
+        self.fleet_slots = {"current": 0, "max": 0}
+        self.exp_slots = {"current": 0, "max": 0}
+        return
+    
+    if isinstance(data, dict) and "fleets" in data:
+        self.fleets_data = data.get("fleets", [])
+        self.fleet_slots = data.get("fleetSlots", {"current": 0, "max": 0})
+        self.exp_slots = data.get("expSlots", {"current": 0, "max": 0})
+        #print(f"[FLEETS] ✅ Cargadas {len(self.fleets_data)} flotas desde pages_views[1]")
+        #print(f"[FLEETS] Slots - Flotas: {self.fleet_slots}, Expediciones: {self.exp_slots}")
+        # Actualizar timestamp
+        self.last_fleet_update = time.time()
+        try:
+            with open("fleets_data.json", "w", encoding="utf-8") as f:
+                json.dump(self.fleets_data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"⚠️ Error guardando misiones: {e}")
+    else:
+        print("[FLEETS] ⚠️  Formato de datos de flotas inválido")
+        self.fleets_data = []
+        self.fleet_slots = {"current": 0, "max": 0}
+        self.exp_slots = {"current": 0, "max": 0}

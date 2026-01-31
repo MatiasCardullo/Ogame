@@ -4,7 +4,298 @@ from text import (
     cantidad, planet_production_entry,
     format_queue_entry, format_research_queue_entry
 )
-from js_scripts import extract_queue_functions
+from js_scripts import in_game,extract_meta_script, extract_queue_functions, extract_resources_script
+
+def setup_main_web_extraction(self):
+    """Configura main_web para extraer datos automáticamente cuando carga una página."""
+    # Ensure we don't attach multiple times
+    try:
+        self.pages_views[0]['web'].loadFinished.disconnect(lambda: on_main_web_loaded(self))
+    except Exception:
+        pass
+    self.pages_views[0]['web'].loadFinished.connect(lambda: on_main_web_loaded(self))
+
+def on_main_web_loaded(self):
+    """Cuando main_web carga una página, extrae datos si estamos en el juego."""
+    def check_ingame(is_ingame):
+        if is_ingame:
+            # Extraer metadata
+            self.pages_views[0]['web'].page().runJavaScript(extract_meta_script, lambda data: handle_main_web_meta(self, data))
+    
+    self.pages_views[0]['web'].page().runJavaScript(in_game, check_ingame)
+
+def handle_main_web_meta(self, data):
+    """Maneja metadata del planeta en main_web."""
+    if not data:
+        print("main web - no data")
+        return
+
+    language = data.get('ogame-language', 'en')
+    player = data.get('ogame-player-name', '—')
+    universe_url = data.get('ogame-universe', '—')
+    universe = data.get('ogame-universe-name', '—')
+    coords = data.get('ogame-planet-coordinates', '0:0:0')
+    planet = data.get('ogame-planet-name', '—')
+    planet_id = data.get('ogame-planet-id', None)
+    planet_type = data.get('ogame-planet-type', None)
+    speed = data.get('ogame-universe-speed', '0')
+    speed_fleet_holding = data.get('ogame-universe-speed-fleet-holding', '0')
+    speed_fleet_peaceful = data.get('ogame-universe-speed-fleet-peaceful', '0')
+    speed_fleet_war = data.get('ogame-universe-speed-fleet-war', '0')
+
+    self.current_main_web_planet = planet
+    self.current_main_web_coords = coords
+    self.current_main_web_is_moon = planet_type == 'moon'
+    self.current_main_web_planet_id = planet_id
+
+    # Extraer recursos
+    self.pages_views[0]['web'].page().runJavaScript(extract_resources_script, lambda data: handle_main_web_resources(self, data))
+
+def handle_main_web_resources(self, data):
+    """Maneja recursos del planeta en main_web."""
+    if not data:
+        return
+    
+    resources = {
+        "metal": data.get("metal", 0),
+        "crystal": data.get("crystal", 0),
+        "deuterium": data.get("deuterium", 0),
+        "energy": data.get("energy", 0),
+        "prod_metal": data.get("prod_metal", 0),
+        "prod_crystal": data.get("prod_crystal", 0),
+        "prod_deuterium": data.get("prod_deuterium", 0),
+        "cap_metal": data.get("capacity_metal", 0),
+        "cap_crystal": data.get("capacity_crystal", 0),
+        "cap_deuterium": data.get("capacity_deuterium", 0),
+        "last_update": time.time()
+    }
+    
+    # Extraer component de la URL de main_web
+    current_url = self.main_web.url().toString()
+    component = 'overview'  # default
+    
+    if '&component=' in current_url:
+        try:
+            component_part = current_url.split('&component=')[1].split('&')[0]
+            component = component_part
+        except Exception:
+            pass
+    
+    # Obtener las queues que deben existir en esta página
+    queues_to_extract = get_queues_for_component(component)
+    
+    if not queues_to_extract:
+        # No hay queues en esta página, solo actualizar recursos sin tocar las queues
+        # Obtener las queues actuales del memory para mantenerlas
+        planet_name = getattr(self, 'current_main_web_planet', 'Unknown')
+        coords = getattr(self, 'current_main_web_coords', '0:0:0')
+        now = int(time.time())
+        
+        queues_list = [
+            q for q in self.main_web_queue_memory.values()
+            if (q.get("planet_name") == planet_name and q.get("coords") == coords) or 
+                q.get("planet_name") == "GLOBAL"
+        ]
+        queues_list.sort(key=lambda q: q.get("end", now))
+        
+        is_moon = getattr(self, 'current_main_web_is_moon', False)
+        parent_planet_key = getattr(self, 'current_planet_parent_key', None)
+        
+        update_planet_data(self,
+            planet_name=planet_name,
+            coords=coords,
+            resources=resources,
+            queues=queues_list,
+            is_moon=is_moon,
+            parent_planet_key=parent_planet_key
+        )
+        return
+    
+    # Construir script dinámico basándose en las queues esperadas
+    parts = []
+    present_js_dict = {}
+    
+    for queue_type in queues_to_extract:
+        if queue_type == 'building':
+            parts.append("extract_building()")
+            present_js_dict['building'] = True
+        elif queue_type == 'research':
+            parts.append("extract_research()")
+            present_js_dict['research'] = True
+        elif queue_type == 'lf_building':
+            parts.append("extract_lf_building()")
+            present_js_dict['lf_building'] = True
+        elif queue_type == 'lf_research':
+            parts.append("extract_lf_research()")
+            present_js_dict['lf_research'] = True
+        elif queue_type == 'shipyard':
+            parts.append("extract_shipyard()")
+            present_js_dict['shipyard'] = True
+    
+    if not parts:
+        update_planet_data(self,
+            planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
+            coords=getattr(self, 'current_main_web_coords', '0:0:0'),
+            resources=resources,
+            queues=[]
+        )
+        return
+    
+    # Construir el objeto present basándose en lo que debería haber
+    present_js = (
+        f"""let present = {{
+            building: {str(present_js_dict.get('building', False)).lower()},
+            research: {str(present_js_dict.get('research', False)).lower()},
+            lf_building: {str(present_js_dict.get('lf_building', False)).lower()},
+            lf_research: {str(present_js_dict.get('lf_research', False)).lower()},
+            shipyard: {str(present_js_dict.get('shipyard', False)).lower()}
+        }};"""
+    )
+    
+    dynamic_script = f"""
+        (function() {{
+            {present_js}
+            let final = [];
+            {extract_queue_functions}
+            return {{ present: present, queues: final.concat({",".join(parts)}) }};
+        }})();"""
+    
+    self.main_web.page().runJavaScript(dynamic_script, lambda queues_data: handle_main_web_queues(self, queues_data, resources))
+
+def handle_main_web_queues(self, data, resources):
+    """Maneja colas del planeta en main_web."""
+    import hashlib
+    
+    now = int(time.time())
+    planet_name = getattr(self, 'current_main_web_planet', 'Unknown')
+    coords = getattr(self, 'current_main_web_coords', '0:0:0')
+    is_moon = getattr(self, 'current_main_web_is_moon', False)
+    parent_planet_key = getattr(self, 'current_planet_parent_key', None)
+    
+    # Procesar colas del DOM actual
+    if data and isinstance(data, dict):
+        queues_data = data.get('queues', []) or []
+        
+        for q in queues_data:
+            label = q.get("label", "")
+            name = q.get("name", "")
+            level = q.get("level", "")
+            start = int(q.get("start", now))
+            end = int(q.get("end", now))
+            
+            is_research = (
+                "investig" in label.lower() or "research" in label.lower() or "🧬" in label
+            )
+            
+            if is_research:
+                key_raw = f"{label}|{name}|GLOBAL|{start}|{end}"
+                planet_for_store = 'GLOBAL'
+                coords_for_store = 'GLOBAL'
+            else:
+                key_raw = f"{label}|{name}|{planet_name}|{coords}|{start}|{end}"
+                planet_for_store = planet_name
+                coords_for_store = coords
+            
+            qid = hashlib.sha1(key_raw.encode("utf-8")).hexdigest()
+            
+            # Guardar en memory
+            self.main_web_queue_memory[qid] = {
+                "id": qid,
+                "label": label,
+                "name": name,
+                "level": level,
+                "start": start,
+                "end": end,
+                "planet_name": planet_for_store,
+                "coords": coords_for_store
+            }
+    
+    # Filtrar colas de memory para este planeta (incluyendo GLOBAL)
+    queues_list = [
+        q for q in self.main_web_queue_memory.values()
+        if (q.get("planet_name") == planet_name and q.get("coords") == coords) or 
+            q.get("planet_name") == "GLOBAL"
+    ]
+    queues_list.sort(key=lambda q: q.get("end", now))
+    
+    update_planet_data(self,
+        planet_name=planet_name,
+        coords=coords,
+        resources=resources,
+        queues=queues_list,
+        is_moon=is_moon,
+        parent_planet_key=parent_planet_key
+    )
+
+# ====================================================================
+#  Incremento pasivo
+# ====================================================================
+def increment_all_planets(self):
+    if not self.planets_data:
+        return
+    now = time.time()
+
+    for planet_key, pdata in self.planets_data.items():
+        r = pdata["resources"]
+        elapsed = now - r.get("last_update", now)
+        if elapsed <= 0:
+            continue
+
+        r["last_update"] = now
+        r["metal"] += r.get("prod_metal", 0) * elapsed
+        r["crystal"] += r.get("prod_crystal", 0) * elapsed
+        r["deuterium"] += r.get("prod_deuterium", 0) * elapsed
+
+# ====================================================================
+#  CHECK QUEUES
+# ====================================================================
+def check_queues(self):
+    now = int(time.time())
+    active_ids = set()
+
+    for planet_key, pdata in self.planets_data.items():
+        coords = pdata.get("coords", "0:0:0")
+        planet_name = pdata.get("name", "")
+        for q in pdata.get("queues", []):
+            qid = q.get("id")
+            if not qid:
+                continue
+            active_ids.add(qid)
+            end = int(q.get("end", now))
+            if end <= now and qid not in self.notified_queues:
+                try:
+                    self.show_notification(
+                        "✅ Cola completada",
+                        f"{planet_name} ({coords}): {q.get('label','')} {q.get('name','')}"
+                    )
+                except Exception as e:
+                    print("[DEBUG] Error al enviar notificación:", e)
+                self.notified_queues.add(qid)
+
+    # Also consider global queues (researches)
+    for q in getattr(self, 'research_data', {}).values():
+        qid = q.get("id")
+        if not qid:
+            continue
+        active_ids.add(qid)
+        end = int(q.get("end", now))
+        if end <= now and qid not in self.notified_queues:
+            try:
+                self.show_notification(
+                    "✅ Cola completada",
+                    f"{q.get('label','')} {q.get('name','')}"
+                )
+            except Exception as e:
+                print("[DEBUG] Error al enviar notificación:", e)
+            self.notified_queues.add(qid)
+
+    # Prune notified set
+    to_remove = [qid for qid in list(self.notified_queues) if qid not in active_ids]
+    for qid in to_remove:
+        try:
+            self.notified_queues.remove(qid)
+        except KeyError:
+            pass
 
 def refresh_resources_panel(self):
     """Actualiza la pestaña de Recursos y Colas"""
@@ -193,7 +484,6 @@ def refresh_resources_panel(self):
 
     self.resources_label.setHtml(html)
 
-
 # ====================================================================
 #  UPDATE PLANET DATA (API nueva con queues que incluyen id)
 # ====================================================================
@@ -319,179 +609,3 @@ def get_queues_for_component(component):
     }
     
     return component_map.get(component, [])
-
-def handle_main_web_resources(self, data):
-    """Maneja recursos del planeta en main_web."""
-    if not data:
-        return
-    
-    resources = {
-        "metal": data.get("metal", 0),
-        "crystal": data.get("crystal", 0),
-        "deuterium": data.get("deuterium", 0),
-        "energy": data.get("energy", 0),
-        "prod_metal": data.get("prod_metal", 0),
-        "prod_crystal": data.get("prod_crystal", 0),
-        "prod_deuterium": data.get("prod_deuterium", 0),
-        "cap_metal": data.get("capacity_metal", 0),
-        "cap_crystal": data.get("capacity_crystal", 0),
-        "cap_deuterium": data.get("capacity_deuterium", 0),
-        "last_update": time.time()
-    }
-    
-    # Extraer component de la URL de main_web
-    current_url = self.main_web.url().toString()
-    component = 'overview'  # default
-    
-    if '&component=' in current_url:
-        try:
-            component_part = current_url.split('&component=')[1].split('&')[0]
-            component = component_part
-        except Exception:
-            pass
-    
-    # Obtener las queues que deben existir en esta página
-    queues_to_extract = get_queues_for_component(component)
-    
-    if not queues_to_extract:
-        # No hay queues en esta página, solo actualizar recursos sin tocar las queues
-        # Obtener las queues actuales del memory para mantenerlas
-        planet_name = getattr(self, 'current_main_web_planet', 'Unknown')
-        coords = getattr(self, 'current_main_web_coords', '0:0:0')
-        now = int(time.time())
-        
-        queues_list = [
-            q for q in self.main_web_queue_memory.values()
-            if (q.get("planet_name") == planet_name and q.get("coords") == coords) or 
-                q.get("planet_name") == "GLOBAL"
-        ]
-        queues_list.sort(key=lambda q: q.get("end", now))
-        
-        is_moon = getattr(self, 'current_main_web_is_moon', False)
-        parent_planet_key = getattr(self, 'current_planet_parent_key', None)
-        
-        update_planet_data(self,
-            planet_name=planet_name,
-            coords=coords,
-            resources=resources,
-            queues=queues_list,
-            is_moon=is_moon,
-            parent_planet_key=parent_planet_key
-        )
-        return
-    
-    # Construir script dinámico basándose en las queues esperadas
-    parts = []
-    present_js_dict = {}
-    
-    for queue_type in queues_to_extract:
-        if queue_type == 'building':
-            parts.append("extract_building()")
-            present_js_dict['building'] = True
-        elif queue_type == 'research':
-            parts.append("extract_research()")
-            present_js_dict['research'] = True
-        elif queue_type == 'lf_building':
-            parts.append("extract_lf_building()")
-            present_js_dict['lf_building'] = True
-        elif queue_type == 'lf_research':
-            parts.append("extract_lf_research()")
-            present_js_dict['lf_research'] = True
-        elif queue_type == 'shipyard':
-            parts.append("extract_shipyard()")
-            present_js_dict['shipyard'] = True
-    
-    if not parts:
-        update_planet_data(self,
-            planet_name=getattr(self, 'current_main_web_planet', 'Unknown'),
-            coords=getattr(self, 'current_main_web_coords', '0:0:0'),
-            resources=resources,
-            queues=[]
-        )
-        return
-    
-    # Construir el objeto present basándose en lo que debería haber
-    present_js = (
-        f"""let present = {{
-            building: {str(present_js_dict.get('building', False)).lower()},
-            research: {str(present_js_dict.get('research', False)).lower()},
-            lf_building: {str(present_js_dict.get('lf_building', False)).lower()},
-            lf_research: {str(present_js_dict.get('lf_research', False)).lower()},
-            shipyard: {str(present_js_dict.get('shipyard', False)).lower()}
-        }};"""
-    )
-    
-    dynamic_script = f"""
-        (function() {{
-            {present_js}
-            let final = [];
-            {extract_queue_functions}
-            return {{ present: present, queues: final.concat({",".join(parts)}) }};
-        }})();"""
-    
-    self.main_web.page().runJavaScript(dynamic_script, lambda queues_data: handle_main_web_queues(self, queues_data, resources))
-
-def handle_main_web_queues(self, data, resources):
-    """Maneja colas del planeta en main_web."""
-    import hashlib
-    
-    now = int(time.time())
-    planet_name = getattr(self, 'current_main_web_planet', 'Unknown')
-    coords = getattr(self, 'current_main_web_coords', '0:0:0')
-    is_moon = getattr(self, 'current_main_web_is_moon', False)
-    parent_planet_key = getattr(self, 'current_planet_parent_key', None)
-    
-    # Procesar colas del DOM actual
-    if data and isinstance(data, dict):
-        queues_data = data.get('queues', []) or []
-        
-        for q in queues_data:
-            label = q.get("label", "")
-            name = q.get("name", "")
-            level = q.get("level", "")
-            start = int(q.get("start", now))
-            end = int(q.get("end", now))
-            
-            is_research = (
-                "investig" in label.lower() or "research" in label.lower() or "🧬" in label
-            )
-            
-            if is_research:
-                key_raw = f"{label}|{name}|GLOBAL|{start}|{end}"
-                planet_for_store = 'GLOBAL'
-                coords_for_store = 'GLOBAL'
-            else:
-                key_raw = f"{label}|{name}|{planet_name}|{coords}|{start}|{end}"
-                planet_for_store = planet_name
-                coords_for_store = coords
-            
-            qid = hashlib.sha1(key_raw.encode("utf-8")).hexdigest()
-            
-            # Guardar en memory
-            self.main_web_queue_memory[qid] = {
-                "id": qid,
-                "label": label,
-                "name": name,
-                "level": level,
-                "start": start,
-                "end": end,
-                "planet_name": planet_for_store,
-                "coords": coords_for_store
-            }
-    
-    # Filtrar colas de memory para este planeta (incluyendo GLOBAL)
-    queues_list = [
-        q for q in self.main_web_queue_memory.values()
-        if (q.get("planet_name") == planet_name and q.get("coords") == coords) or 
-            q.get("planet_name") == "GLOBAL"
-    ]
-    queues_list.sort(key=lambda q: q.get("end", now))
-    
-    update_planet_data(self,
-        planet_name=planet_name,
-        coords=coords,
-        resources=resources,
-        queues=queues_list,
-        is_moon=is_moon,
-        parent_planet_key=parent_planet_key
-    )
