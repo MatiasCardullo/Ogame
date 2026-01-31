@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from fleet_tab import _refresh_scheduled_fleets_list, save_scheduled_fleets
-from text import cantidad
+from utils.text import cantidad
 
 def create_debris_tab(self):
     """Crea la pestaña para mostrar debris y programar reciclajes"""

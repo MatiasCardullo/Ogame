@@ -1,6 +1,8 @@
-import os, random, time, json, sys, traceback, queue, threading, string, keyboard
-import requests, browser_cookie3, sqlite3
+import os, time, json, sys, traceback, queue, threading, string, keyboard, sqlite3
 from tqdm import tqdm
+
+from utils.browser import ensure_logged_in
+from utils.sql import sql_create, sql_insert_values
 
 TABLE_SCANS = [("id", 'INTEGER PRIMARY KEY AUTOINCREMENT'), ("galaxy", 'INTEGER'), ("system", 'INTEGER'), ("scanned_at", 'REAL'), ("success", 'INTEGER')]
 TABLE_PLAYERS = [("player_id", 'INTEGER PRIMARY KEY'), ("name", 'TEXT'), ("alliance_id", 'INTEGER'), ("alliance_tag", 'TEXT'), ("rank_position", 'INTEGER'), ("is_active", 'INTEGER'), ("is_inactive", 'INTEGER'), ("is_vacation", 'INTEGER'), ("is_banned", 'INTEGER')]
@@ -33,24 +35,7 @@ def close():
     print("\r                 \r\r", end='')
     sys.exit(1)
 
-def load_ogame_session(profile_path, server):
-    base_url = "ogame.gameforge.com"
-    cj = browser_cookie3.chrome(
-        cookie_file=f"{profile_path}/Cookies",
-        domain_name=base_url
-    )
-    session = requests.Session()
-    session.cookies.update(cj)
-    session.headers.update({
-        "X-Requested-With": "XMLHttpRequest",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "Referer": f"https://{server}.{base_url}/game/index.php?page=ingame&component=galaxy",
-        "Origin": "https://{server}.{base_url}",
-    })
-    return session
 
-def ensure_logged_in(profile_name, server, retry_wait=10):
     BASE_URL = f"https://{server}.ogame.gameforge.com/game/index.php"
     while True:
         session = load_ogame_session(profile_name, server)
@@ -95,12 +80,6 @@ def parse_mission_flags(available):
             result[flags[mt]] = 1
 
     return result
-
-def sql_insert_values(table_cols):
-    return f" ({', '.join(col for col, _ in table_cols)}) VALUES ({', '.join(['?'] * len(table_cols))})"
-
-def sql_create(table):
-    return f"{', '.join([f'{col} {type_}' for col, type_ in table])}"
 
 # ─────────────────────────────
 # DB
@@ -161,7 +140,7 @@ class GalaxyWorker:
         self.DEUTERIUM = 0
 
     def worker_thread(self, tid, systems_q, pbar, lock):
-        session = ensure_logged_in("..\profile_data", "s163-ar")
+        session = ensure_logged_in("..\profile_data", "s163-ar", "?page=ingame&component=galaxy")
         conn = init_db("galaxy.db")
 
         status = tqdm(
@@ -197,7 +176,7 @@ class GalaxyWorker:
 
                 ok, session_cookie = self.parse_galaxy_response(r, conn, self.galaxy, system)
                 if not ok:
-                    session = ensure_logged_in("..\profile_data", "s163-ar")
+                    session = ensure_logged_in("..\profile_data", "s163-ar", "?page=ingame&component=galaxy")
                 # Actualizar la cookie de sesión si se recibió una nueva
                 if session_cookie:
                     session.cookies.set("prsess_100170", session_cookie)

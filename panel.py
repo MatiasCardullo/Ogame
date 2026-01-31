@@ -1,6 +1,6 @@
 import time
 from fleet_tab import update_fleet_origin_combo
-from text import (
+from utils.text import (
     cantidad, planet_production_entry,
     format_queue_entry, format_research_queue_entry
 )

@@ -2,30 +2,7 @@ import json, re, os
 from datetime import datetime
 from bs4 import BeautifulSoup
 from PyQt6.QtCore import pyqtSignal, QObject
-from workers.new_galaxy_worker import load_ogame_session
-
-def clean_message_html(html_content: str, base_url: str = "https://s163-ar.ogame.gameforge.com") -> str:
-    """
-    Limpia el HTML de los mensajes:
-    1. Remueve scripts <script type="text/javascript">initOverlays();</script>
-    2. Agrega base_url a las imágenes con src que comienzan con '/'
-    """
-    if not html_content:
-        return html_content
-    
-    soup = BeautifulSoup(html_content, 'html.parser')
-    
-    # 1. Remover scripts
-    for script in soup.find_all('script', {'type': 'text/javascript'}):
-        script.decompose()
-    
-    # 2. Actualizar URLs de imágenes
-    for img in soup.find_all('img'):
-        src = img.get('src', '')
-        if src and src.startswith('/'):
-            img['src'] = base_url + src
-    
-    return str(soup)
+from utils.browser import load_ogame_session
 
 def fetch_messages(base_url, profile_path="profile_data"):
     """
@@ -150,10 +127,8 @@ def fetch_messages(base_url, profile_path="profile_data"):
                     for msg in messages_list:
                         # Agregar información de tab/subtab al mensaje
                         if isinstance(msg, str):
-                            # Si es HTML, limpiarlo (remover scripts, agregar base_url a imágenes)
-                            cleaned_html = clean_message_html(msg, base_url)
                             msg_obj = {
-                                "html": cleaned_html,
+                                "html": msg,
                                 "tab_id": active_tab,
                                 "tab_name": tab_name,
                                 "subtab_id": active_subtab,
@@ -162,7 +137,7 @@ def fetch_messages(base_url, profile_path="profile_data"):
                         else:
                             # Si es dict, limpiar el campo html si existe
                             if "html" in msg and isinstance(msg["html"], str):
-                                msg["html"] = clean_message_html(msg["html"], base_url)
+                                msg["html"] = msg["html"]
                             msg["tab_id"] = active_tab
                             msg["tab_name"] = tab_name
                             msg["subtab_id"] = active_subtab

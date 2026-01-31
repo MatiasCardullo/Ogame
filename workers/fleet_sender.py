@@ -4,7 +4,7 @@ Estrategia de token AJAX: Se obtiene de cualquier endpoint API exitoso
 """
 import requests, time, json, traceback
 from datetime import datetime
-from workers.new_galaxy_worker import load_ogame_session
+from utils.browser import load_ogame_session
 from typing import Optional
 
 # Cache global para el token AJAX

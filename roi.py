@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QTableWidget, QTableWidgetItem, 
     QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox
 )
-from text import time_str
+from utils.text import time_str
 
 # =========================
 # EDIFICIOS

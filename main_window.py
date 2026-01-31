@@ -17,7 +17,7 @@ from js_scripts import (
     in_game, extract_meta_script, extract_resources_script, auction_listener,
     extract_planet_array, extract_fleets_script
 )
-from text import time_str_to_ms
+from utils.text import time_str_to_ms
 
 logged = True
 os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
